@@ -140,7 +140,10 @@ function render() {
   const { bundles, singles } = groupCampBundles(state.schedules, state.programs);
 
   // ---- Camps: separate table, shown above the weekly grid ----
-  if (bundles.length > 0) root.appendChild(renderCampsTable(bundles));
+  if (bundles.length > 0) {
+    root.appendChild(renderCampsTable(bundles));
+    root.appendChild(el("h3", "calendar-camps-title", "Classes"));
+  }
 
   // ---- Desktop weekly grid ----
   const byDay = {};
