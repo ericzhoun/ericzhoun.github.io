@@ -1496,6 +1496,51 @@ textarea {
   }
 }
 
+/* Camps: separate table below the weekly grid/mobile list */
+.calendar-camps {
+  margin-top: 2rem;
+}
+
+.calendar-camps-title {
+  font-size: 1.3rem;
+  font-weight: 500;
+  margin-bottom: 0.75rem;
+}
+
+.camps-table-wrapper {
+  overflow-x: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.camps-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 600px;
+}
+
+.camps-table th,
+.camps-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.85rem;
+}
+
+.camps-table th {
+  background: var(--color-bg);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.camps-table tr:last-child td {
+  border-bottom: none;
+}
+
 /* Empty state */
 .empty-state {
   text-align: center;

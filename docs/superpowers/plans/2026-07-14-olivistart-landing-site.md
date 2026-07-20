@@ -293,7 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="container footer-inner">
       <p>OliVista Art Studio &middot; Learn to See &middot; Explore &middot; Create</p>
       <p><a href="mailto:olivistastudio@gmail.com">olivistastudio@gmail.com</a></p>
-      <p class="footer-note">Maximum 6 students per class</p>
+      
       <p class="footer-copyright">&copy; 2026 OliVista Art Studio. All rights reserved.</p>
     </div>
   </footer>
@@ -344,7 +344,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="container footer-inner">
       <p>OliVista Art Studio &middot; Learn to See &middot; Explore &middot; Create</p>
       <p><a href="mailto:olivistastudio@gmail.com">olivistastudio@gmail.com</a></p>
-      <p class="footer-note">Maximum 6 students per class</p>
+      
       <p class="footer-copyright">&copy; 2026 OliVista Art Studio. All rights reserved.</p>
     </div>
   </footer>
@@ -395,7 +395,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="container footer-inner">
       <p>OliVista Art Studio &middot; Learn to See &middot; Explore &middot; Create</p>
       <p><a href="mailto:olivistastudio@gmail.com">olivistastudio@gmail.com</a></p>
-      <p class="footer-note">Maximum 6 students per class</p>
+      
       <p class="footer-copyright">&copy; 2026 OliVista Art Studio. All rights reserved.</p>
     </div>
   </footer>
@@ -446,7 +446,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="container footer-inner">
       <p>OliVista Art Studio &middot; Learn to See &middot; Explore &middot; Create</p>
       <p><a href="mailto:olivistastudio@gmail.com">olivistastudio@gmail.com</a></p>
-      <p class="footer-note">Maximum 6 students per class</p>
+      
       <p class="footer-copyright">&copy; 2026 OliVista Art Studio. All rights reserved.</p>
     </div>
   </footer>

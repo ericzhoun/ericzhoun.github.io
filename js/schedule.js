@@ -135,16 +135,19 @@ function render() {
   }
 
   // ---- Camp bundles vs. regular per-day schedules ----
+  // Camps get their own table (see renderCampsTable) instead of sharing the
+  // weekly grid, since a bundle's day span doesn't fit a single grid cell.
   const { bundles, singles } = groupCampBundles(state.schedules, state.programs);
-  const campStartCells = new Map();
-  bundles.forEach((bundle) => campStartCells.set(`${bundle.days[0]}|${bundle.startTime}`, bundle));
+
+  // ---- Camps: separate table, shown above the weekly grid ----
+  if (bundles.length > 0) root.appendChild(renderCampsTable(bundles));
 
   // ---- Desktop weekly grid ----
   const byDay = {};
   DAYS.forEach((d) => (byDay[d] = []));
   singles.forEach((s) => { if (byDay[s.day_of_week]) byDay[s.day_of_week].push(s); });
 
-  const allTimes = [...new Set([...singles.map((s) => s.start_time), ...bundles.map((b) => b.startTime)])].sort();
+  const allTimes = [...new Set(singles.map((s) => s.start_time))].sort();
   const slotMap = schedulesBySlot(singles);
 
   const wrapper = el("div", "calendar-grid-wrapper");
@@ -171,31 +174,6 @@ function render() {
     let dayIndex = 0;
     while (dayIndex < DAYS.length) {
       const day = DAYS[dayIndex];
-      const bundle = campStartCells.get(`${day}|${time}`);
-
-      if (bundle) {
-        const span = DAYS.indexOf(bundle.days[bundle.days.length - 1]) - dayIndex + 1;
-        const prog = state.programs.find((p) => p.id === bundle.programId);
-        const color = getColorForProgram(bundle.programId, state.programs);
-        const cell = el("div", "calendar-cell calendar-class-cell");
-        cell.style.gridColumn = `${dayIndex + 2} / span ${span}`;
-        cell.style.gridRow = String(rowNum);
-        const a = el("a", "calendar-class");
-        a.href = `enroll.html?schedule=${bundle.schedules[0].id}`;
-        a.style.background = color.bg;
-        a.style.borderColor = color.border;
-        a.style.color = color.text;
-        a.appendChild(el("span", "calendar-class-program", prog ? prog.name : "Camp"));
-        a.appendChild(el("span", "calendar-class-time",
-          `${formatTime(bundle.startTime)}–${formatTime(bundle.endTime)}`));
-        a.appendChild(el("span", "calendar-class-price",
-          `${formatPrice(bundle.pricePerClassCents)} × ${bundle.days.length} days = ${formatPrice(bundle.totalCents)}`));
-        cell.appendChild(a);
-        grid.appendChild(cell);
-        dayIndex += span;
-        continue;
-      }
-
       const schedules = slotMap[`${day}|${time}`] || [];
       const cellColumn = dayIndex + 2;
       if (schedules.length === 0) {
@@ -233,30 +211,10 @@ function render() {
 
   // ---- Mobile list grouped by day ----
   const mobile = el("div", "calendar-mobile");
-  DAYS.filter((d) => byDay[d].length > 0 || bundles.some((b) => b.days[0] === d)).forEach((day) => {
+  DAYS.filter((d) => byDay[d].length > 0).forEach((day) => {
     const group = el("div", "calendar-day-group");
     group.appendChild(el("h4", "calendar-day-title", day));
     const list = el("div", "calendar-day-classes");
-
-    bundles.filter((b) => b.days[0] === day).forEach((bundle) => {
-      const prog = state.programs.find((p) => p.id === bundle.programId);
-      const color = getColorForProgram(bundle.programId, state.programs);
-      const card = el("a", "calendar-class-mobile");
-      card.href = `enroll.html?schedule=${bundle.schedules[0].id}`;
-      card.style.borderLeftColor = color.border;
-      card.style.background = color.bg;
-      const header = el("div", "calendar-class-mobile-header");
-      header.style.color = color.text;
-      header.appendChild(el("span", "calendar-class-program", prog ? prog.name : "Camp"));
-      header.appendChild(el("span", "calendar-class-price",
-        `${formatPrice(bundle.pricePerClassCents)} × ${bundle.days.length} days = ${formatPrice(bundle.totalCents)}`));
-      card.appendChild(header);
-      const details = el("div", "calendar-class-mobile-details");
-      details.appendChild(el("span", "",
-        `${bundle.days.join(", ")} · ${formatTime(bundle.startTime)}–${formatTime(bundle.endTime)}`));
-      card.appendChild(details);
-      list.appendChild(card);
-    });
 
     byDay[day].forEach((sched) => {
       const prog = state.programs.find((p) => p.id === sched.program_id);
@@ -280,6 +238,39 @@ function render() {
     mobile.appendChild(group);
   });
   root.appendChild(mobile);
+}
+
+function renderCampsTable(bundles) {
+  const section = el("section", "calendar-camps");
+  section.appendChild(el("h3", "calendar-camps-title", "Camps"));
+  const wrapper = el("div", "camps-table-wrapper");
+  const table = el("table", "camps-table");
+  const thead = el("thead", "", "<tr><th>Program</th><th>Days</th><th>Time</th><th>Age Group</th><th>Price</th><th></th></tr>");
+  table.appendChild(thead);
+  const tbody = el("tbody");
+  bundles.forEach((bundle) => {
+    const prog = state.programs.find((p) => p.id === bundle.programId);
+    const row = el("tr");
+    row.appendChild(el("td", "", esc(prog ? prog.name : "Camp")));
+    row.appendChild(el("td", "", bundle.days.join(", ")));
+    row.appendChild(el("td", "", `${formatTime(bundle.startTime)}–${formatTime(bundle.endTime)}`));
+    row.appendChild(el("td", "", esc(formatAgeGroup(bundle.ageGroup))));
+    row.appendChild(el("td", "", `${formatPrice(bundle.pricePerClassCents)} × ${bundle.days.length} days = ${formatPrice(bundle.totalCents)}`));
+    const actionCell = el("td");
+    const link = el("a", "btn btn-sm", "Enroll");
+    link.href = `enroll.html?schedule=${bundle.schedules[0].id}`;
+    actionCell.appendChild(link);
+    row.appendChild(actionCell);
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+  wrapper.appendChild(table);
+  section.appendChild(wrapper);
+  return section;
+}
+
+function esc(v = "") {
+  return String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 }
 
 async function changeSemester(semesterId) {

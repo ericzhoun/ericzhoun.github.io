@@ -133,6 +133,7 @@ export function groupCampBundles(schedules, programs) {
       schedules: sorted,
       startTime: sorted[0].start_time,
       endTime: sorted[0].end_time,
+      ageGroup: sorted[0].age_group,
       pricePerClassCents: sorted[0].price_cents,
       totalCents: sorted[0].price_cents * sorted.length,
     };
@@ -153,6 +154,51 @@ export function campBundleQuery(schedule) {
     `&price_cents=eq.${schedule.price_cents}` +
     `&max_seats=eq.${schedule.max_seats}` +
     `&active=eq.true&order=day_of_week.asc`;
+}
+
+/** Diff a camp program's full class_schedules row set (active + inactive)
+ *  against the days it should have active, per bundle instance (grouped by
+ *  scheduleBundleKey). Pure - makes no API calls. Bundle groups with no
+ *  currently-active row are skipped (retired bundles, left untouched).
+ *  Returns one plan per live bundle:
+ *  { key, deactivateIds, reactivateIds, createRows }. Used by the admin
+ *  Programs form to resync schedule rows when a camp's day checkboxes
+ *  change. */
+export function planCampBundleSync(scheduleRows, targetDays) {
+  const targetSet = new Set(targetDays);
+  const byKey = new Map();
+  for (const row of scheduleRows) {
+    const key = scheduleBundleKey(row);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(row);
+  }
+  const plans = [];
+  for (const [key, group] of byKey) {
+    if (!group.some((row) => row.active)) continue;
+    const byDay = new Map(group.map((row) => [row.day_of_week, row]));
+    const deactivateIds = group
+      .filter((row) => row.active && !targetSet.has(row.day_of_week))
+      .map((row) => row.id);
+    const reactivateIds = [];
+    const createRows = [];
+    for (const day of targetDays) {
+      const existing = byDay.get(day);
+      if (!existing) {
+        const template = group[0];
+        createRows.push({
+          program_id: template.program_id, semester_id: template.semester_id,
+          session_type: template.session_type, start_time: template.start_time,
+          end_time: template.end_time, age_group: template.age_group,
+          price_cents: template.price_cents, max_seats: template.max_seats,
+          day_of_week: day, active: true,
+        });
+      } else if (!existing.active) {
+        reactivateIds.push(existing.id);
+      }
+    }
+    plans.push({ key, deactivateIds, reactivateIds, createRows });
+  }
+  return plans;
 }
 
 /** Query paths for the schedule page's semesters, programs, and per-semester class

@@ -6,13 +6,8 @@ const readAdmin = () => readFile(new URL("../js/admin.js", import.meta.url), "ut
 
 test("admin.js exposes a Program Type select on the programs form", async () => {
   const script = await readAdmin();
-  assert.match(script, /\["program_type","Program Type","select"/);
-  assert.match(script, /\[\["class","Class"\],\["camp","Camp"\]\]/);
-});
-
-test("admin.js form() builder supports select-type fields", async () => {
-  const script = await readAdmin();
-  assert.match(script, /type === "select"/);
+  assert.match(script, /<select name="program_type" id="program-type">/);
+  assert.match(script, /\[\["class", "Class"\], \["camp", "Camp"\]\]/);
 });
 
 test("admin.js shows the program type in the Programs table", async () => {

@@ -1,4 +1,4 @@
-import { adminApi, formatPrice, formatTime } from "./api.js";
+import { adminApi, formatPrice, formatTime, planCampBundleSync } from "./api.js";
 import { getUser, isAdmin, logout } from "./auth.js";
 
 const nav = [
@@ -46,7 +46,7 @@ async function dashboard() {
   app.innerHTML = `<h1>Dashboard</h1><div class="stat-grid">${[[programs.length,"Programs","programs"],[schedules.length,"Class Schedules","schedules"],[enrollments.length,"Enrollments","enrollments"]].map(([n,l,id]) => `<a href="#${id}" class="stat-card"><span class="stat-number">${n}</span><span class="stat-label">${l}</span></a>`).join("")}</div><section class="dashboard-quick-links"><h2>Quick Actions</h2><div class="quick-link-grid"><a class="quick-link" href="#schedules"><h3>Manage Schedules →</h3><p>Add class times, prices, and capacity.</p></a><a class="quick-link" href="#programs"><h3>Manage Programs →</h3><p>Create or update art program types.</p></a><a class="quick-link" href="#enrollments"><h3>View Enrollments →</h3><p>Review students and payment status.</p></a></div></section>`;
 }
 const configs = {
-  programs: { title: "Programs", endpoint: "programs?order=sort_order.asc", fields: [["name","Name"],["slug","Slug"],["description","Description","textarea"],["image_url","Image URL"],["sort_order","Sort Order","number"],["program_type","Program Type","select",[["class","Class"],["camp","Camp"]]],["num_classes","Number of Classes (for camps, set to the number of days in the bundle - e.g. 5 for Mon-Fri)","number"],["early_bird_discount_pct","Early-Bird Discount %","number"],["early_bird_deadline","Early-Bird Deadline","date"]], cols: ["name","program_type","num_classes","active"], labels: ["Name","Type","Classes","Active"] },
+  programs: { title: "Programs", endpoint: "programs?order=sort_order.asc", fields: [], cols: ["name","program_type","num_classes","active"], labels: ["Name","Type","Classes","Active"] },
   semesters: { title: "Semesters", endpoint: "semesters?order=start_date.desc", fields: [["name","Name"],["start_date","Start Date","date"],["end_date","End Date","date"]], cols: ["name","start_date","end_date","active"], labels: ["Name","Start","End","Active"] },
   schedules: { title: "Class Schedules", endpoint: "class_schedules?order=created_at.desc", fields: [], cols: ["program_id","semester_id","day_of_week","session_type","start_time","age_group","price_cents","max_seats","active"], labels: ["Program","Semester","Day","Session","Start","Age","Price","Seats","Active"] },
 };
@@ -93,6 +93,29 @@ function scheduleForm(values, programs, semesters, title, isEditing = false) {
   </form>`;
 }
 
+function programForm(values, title) {
+  const programType = values.program_type || "class";
+  const campDays = values.campDays || [];
+  return `<form id="record-form" class="admin-form">
+    <h3>${title}</h3><p class="auth-error" id="form-error" hidden></p>
+    <label>Name<input name="name" required value="${esc(values.name || "")}"></label>
+    <label>Slug<input name="slug" required value="${esc(values.slug || "")}"></label>
+    <label>Description<textarea name="description">${esc(values.description || "")}</textarea></label>
+    <label>Image URL<input name="image_url" value="${esc(values.image_url || "")}"></label>
+    <label>Sort Order<input name="sort_order" type="number" value="${esc(values.sort_order ?? 0)}"></label>
+    <label>Program Type<select name="program_type" id="program-type">${[["class", "Class"], ["camp", "Camp"]].map(([value, text]) => `<option value="${value}" ${value === programType ? "selected" : ""}>${text}</option>`).join("")}</select></label>
+    <div id="num-classes-field" ${programType === "camp" ? "hidden" : ""}><label>Number of Classes<input name="num_classes" type="number" value="${esc(values.num_classes ?? 0)}"></label></div>
+    <fieldset id="camp-days-field" class="day-picker" ${programType === "camp" ? "" : "hidden"}>
+      <legend>Days per week</legend>
+      <p class="hint">Selected days become this camp's weekly schedule; the class count is calculated automatically.</p>
+      <div>${DAYS.map((day) => `<label><input type="checkbox" name="camp_days" value="${day}" ${campDays.includes(day) ? "checked" : ""}> ${day}</label>`).join("")}</div>
+    </fieldset>
+    <label>Early-Bird Discount %<input name="early_bird_discount_pct" type="number" value="${esc(values.early_bird_discount_pct || 0)}"></label>
+    <label>Early-Bird Deadline<input name="early_bird_deadline" type="date" value="${esc(values.early_bird_deadline ? values.early_bird_deadline.slice(0, 10) : "")}"></label>
+    <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button><button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div>
+  </form>`;
+}
+
 async function crud(id) {
   const c = configs[id];
   const [items, programs, semesters] = await Promise.all([
@@ -133,7 +156,7 @@ async function crud(id) {
   async function crudActions(e) {
     const action = e.target.dataset.action || "";
     if (action === "new-record") {
-      document.querySelector("#form-slot").innerHTML = id === "schedules" ? scheduleForm({}, programs, semesters, "New Class Schedules") : form(c.fields, {}, `New ${c.title.slice(0,-1)}`);
+      document.querySelector("#form-slot").innerHTML = id === "schedules" ? scheduleForm({}, programs, semesters, "New Class Schedules") : id === "programs" ? programForm({}, "New Program") : form(c.fields, {}, `New ${c.title.slice(0,-1)}`);
       bindForm();
     } else if (action.startsWith("copy-group:")) {
       const ids = action.slice("copy-group:".length).split(",");
@@ -147,7 +170,14 @@ async function crud(id) {
       bindForm(group.members);
     } else if (action.startsWith("edit:")) {
       const item = items.find((x) => String(x.id) === action.slice(5));
-      document.querySelector("#form-slot").innerHTML = id === "schedules" ? scheduleForm(item, programs, semesters, "Edit Class Schedule", true) : form(c.fields, item, `Edit ${c.title.slice(0,-1)}`);
+      if (id === "programs") {
+        const campDays = item.program_type === "camp"
+          ? [...new Set((await adminApi(`class_schedules?program_id=eq.${item.id}&active=eq.true`)).map((row) => row.day_of_week))]
+          : [];
+        document.querySelector("#form-slot").innerHTML = programForm({ ...item, campDays }, "Edit Program");
+      } else {
+        document.querySelector("#form-slot").innerHTML = id === "schedules" ? scheduleForm(item, programs, semesters, "Edit Class Schedule", true) : form(c.fields, item, `Edit ${c.title.slice(0,-1)}`);
+      }
       bindForm(item.id);
     } else if (action.startsWith("delete-group:") && confirm("Delete these class schedules?")) {
       const ids = action.slice("delete-group:".length).split(",");
@@ -175,6 +205,16 @@ async function crud(id) {
       };
       sessionType.addEventListener("change", updateSessionDetails);
       startTime.addEventListener("change", updateSessionDetails);
+    }
+    if (id === "programs") {
+      const programType = document.querySelector("#program-type");
+      const numClassesField = document.querySelector("#num-classes-field");
+      const campDaysField = document.querySelector("#camp-days-field");
+      programType.addEventListener("change", () => {
+        const isCamp = programType.value === "camp";
+        numClassesField.hidden = isCamp;
+        campDaysField.hidden = !isCamp;
+      });
     }
     formElement.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -213,6 +253,24 @@ async function crud(id) {
             ]);
           } else {
             await Promise.all(days.map((day_of_week) => adminApi("class_schedules", { method: "POST", body: { ...body, day_of_week } })));
+          }
+        } else if (id === "programs") {
+          const isCamp = body.program_type === "camp";
+          const campDays = data.getAll("camp_days");
+          if (isCamp) {
+            if (!campDays.length) throw new Error("Select at least one day of the week.");
+            body.num_classes = campDays.length;
+          }
+          delete body.camp_days;
+          await adminApi(`programs${editId ? `/${editId}` : ""}`, { method: editId ? "PATCH" : "POST", body });
+          if (isCamp && editId) {
+            const allRows = await adminApi(`class_schedules?program_id=eq.${editId}`);
+            const plans = planCampBundleSync(allRows, campDays);
+            await Promise.all(plans.flatMap((plan) => [
+              ...plan.deactivateIds.map((rowId) => adminApi(`class_schedules/${rowId}`, { method: "PATCH", body: { active: false } })),
+              ...plan.reactivateIds.map((rowId) => adminApi(`class_schedules/${rowId}`, { method: "PATCH", body: { active: true } })),
+              ...plan.createRows.map((row) => adminApi("class_schedules", { method: "POST", body: row })),
+            ]));
           }
         } else {
           await adminApi(`${id}${editId ? `/${editId}` : ""}`, { method: editId ? "PATCH" : "POST", body });
