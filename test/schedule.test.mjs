@@ -33,6 +33,13 @@ test("schedule.js shows the per-day price times day count for camp bundles", asy
   assert.match(script, /days = \$\{formatPrice\(bundle\.totalCents\)\}/);
 });
 
+test("schedule.js inserts a 'Classes' heading between the camps table and the weekly grid when camps exist", async () => {
+  const script = await readSchedule();
+  const match = script.match(/if \(bundles\.length > 0\) \{[\s\S]*?\n {2}\}\n\n {2}\/\/ ---- Desktop weekly grid/);
+  assert.ok(match, "the camps-table block guarding on bundles.length should be found");
+  assert.match(match[0], /"Classes"/);
+});
+
 test("renderCampsTable makes each camp row clickable to its enroll link, not just the Enroll button", async () => {
   const script = await readSchedule();
   const match = script.match(/function renderCampsTable\([\s\S]*?\n}\n/);
