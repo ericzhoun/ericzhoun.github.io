@@ -1541,6 +1541,10 @@ textarea {
   border-bottom: none;
 }
 
+.camps-table tbody tr:hover {
+  background: var(--color-bg);
+}
+
 /* Empty state */
 .empty-state {
   text-align: center;

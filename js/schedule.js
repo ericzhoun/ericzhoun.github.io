@@ -242,7 +242,7 @@ function render() {
 
 function renderCampsTable(bundles) {
   const section = el("section", "calendar-camps");
-  section.appendChild(el("h3", "calendar-camps-title", "Camps"));
+  section.appendChild(el("h3", "calendar-camps-title", "Summer Camp"));
   const wrapper = el("div", "camps-table-wrapper");
   const table = el("table", "camps-table");
   const thead = el("thead", "", "<tr><th>Program</th><th>Days</th><th>Time</th><th>Age Group</th><th>Price</th><th></th></tr>");
@@ -261,6 +261,11 @@ function renderCampsTable(bundles) {
     link.href = `enroll.html?schedule=${bundle.schedules[0].id}`;
     actionCell.appendChild(link);
     row.appendChild(actionCell);
+    row.style.cursor = "pointer";
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("a")) return;
+      window.location.href = link.href;
+    });
     tbody.appendChild(row);
   });
   table.appendChild(tbody);

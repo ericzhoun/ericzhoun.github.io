@@ -33,6 +33,17 @@ test("schedule.js shows the per-day price times day count for camp bundles", asy
   assert.match(script, /days = \$\{formatPrice\(bundle\.totalCents\)\}/);
 });
 
+test("renderCampsTable makes each camp row clickable to its enroll link, not just the Enroll button", async () => {
+  const script = await readSchedule();
+  const match = script.match(/function renderCampsTable\([\s\S]*?\n}\n/);
+  assert.ok(match, "renderCampsTable should be defined");
+
+  assert.match(match[0], /row\.style\.cursor = "pointer"/);
+  assert.match(match[0], /row\.addEventListener\("click"/);
+  // Clicking the Enroll link itself shouldn't double-navigate via the row handler.
+  assert.match(match[0], /closest\("a"\)/);
+});
+
 test("schedule failures provide an accessible retry action", async () => {
   const script = await readSchedule();
 
