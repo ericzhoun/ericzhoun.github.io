@@ -52,11 +52,10 @@ const configs = {
 };
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const SESSION_TYPES = {
-  standard: { label: "Standard Session", minutes: 60 },
-  extended: { label: "Extended Session", minutes: 90 },
-  full: { label: "Full Session", minutes: 120 },
+  standard: { label: "Standard Session", minutes: 60, priceDollars: 35 },
+  extended: { label: "Extended Session", minutes: 90, priceDollars: 42 },
+  full: { label: "Full Session", minutes: 120, priceDollars: 56 },
 };
-const HOURLY_RATE = 35;
 
 function sessionTypeFor(values) {
   if (SESSION_TYPES[values.session_type]) return values.session_type;
@@ -76,7 +75,7 @@ function addMinutes(time, minutes) {
 function scheduleForm(values, programs, semesters, title, isEditing = false) {
   const selectedDays = values.days || (isEditing ? [values.day_of_week] : []);
   const sessionType = sessionTypeFor(values);
-  const priceDollars = values.price_cents != null ? (values.price_cents / 100).toFixed(2) : (SESSION_TYPES[sessionType].minutes / 60 * HOURLY_RATE).toFixed(2);
+  const priceDollars = values.price_cents != null ? (values.price_cents / 100).toFixed(2) : SESSION_TYPES[sessionType].priceDollars.toFixed(2);
   return `<form id="record-form" class="admin-form">
     <h3>${title}</h3><p class="auth-error" id="form-error" hidden></p>
     <label>Program<select name="program_id" required><option value="">Select a program</option>${programs.map((p) => `<option value="${esc(p.id)}" ${p.id === values.program_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
@@ -86,7 +85,7 @@ function scheduleForm(values, programs, semesters, title, isEditing = false) {
     <label>Session type<select name="session_type" id="session-type" required>${Object.entries(SESSION_TYPES).map(([key, type]) => `<option value="${key}" ${key === sessionType ? "selected" : ""}>${type.label}</option>`).join("")}</select></label>
     <div class="form-row"><label>Start time<input name="start_time" id="start-time" type="time" required value="${esc(values.start_time || "10:00")}"></label><label>End time<input name="end_time" id="end-time" type="time" required readonly value="${esc(values.end_time || addMinutes(values.start_time || "10:00", SESSION_TYPES[sessionType].minutes))}"></label></div>
     <div class="form-row"><label>Age group<input name="age_group" required value="${esc(values.age_group || "")}" placeholder="e.g. Ages 6-10"></label><label>Max seats<input name="max_seats" type="number" min="1" required value="${esc(values.max_seats || 8)}"></label></div>
-    <div class="form-row"><label>Price per class ($)<input name="price_dollars" id="price-dollars" type="number" min="0" step="0.01" required value="${esc(priceDollars)}"><span class="hint">Calculated at $35/hour. You can adjust it if needed.</span></label><label>Early-bird discount %<input name="early_bird_discount_pct" type="number" min="0" max="100" value="${esc(values.early_bird_discount_pct || 0)}"></label></div>
+    <div class="form-row"><label>Price per class ($)<input name="price_dollars" id="price-dollars" type="number" min="0" step="0.01" required value="${esc(priceDollars)}"><span class="hint">Defaults by session type: $35 standard, $42 extended, $56 full. You can adjust it if needed.</span></label><label>Early-bird discount %<input name="early_bird_discount_pct" type="number" min="0" max="100" value="${esc(values.early_bird_discount_pct || 0)}"></label></div>
     <label>Early-bird deadline<input name="early_bird_deadline" type="date" value="${esc(values.early_bird_deadline ? values.early_bird_deadline.slice(0, 10) : "")}"></label>
     <label>Notes<textarea name="notes">${esc(values.notes || "")}</textarea></label>
     <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>${isEditing ? "Update" : "Create schedules"}</button><button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div>
@@ -212,7 +211,7 @@ async function crud(id) {
       const updateSessionDetails = () => {
         const type = SESSION_TYPES[sessionType.value];
         endTime.value = addMinutes(startTime.value, type.minutes);
-        priceDollars.value = (type.minutes / 60 * HOURLY_RATE).toFixed(2);
+        priceDollars.value = type.priceDollars.toFixed(2);
       };
       sessionType.addEventListener("change", updateSessionDetails);
       startTime.addEventListener("change", updateSessionDetails);
