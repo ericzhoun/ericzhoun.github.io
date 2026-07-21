@@ -1,5 +1,5 @@
 :root {
-  --color-bg: #faf7f2;
+  --color-bg: #c5cebf;
   --color-surface: #ffffff;
   --color-text: #2b2b2b;
   --color-text-muted: #5a5a5a;
@@ -791,7 +791,7 @@ textarea {
 
 .philosophy-teaser blockquote {
   font-family: var(--font-heading);
-  font-size: 1.5rem;
+  font-size: 2.5rem;
   font-weight: 600;
   margin: 0 0 16px;
   color: var(--color-creative-foundations);
