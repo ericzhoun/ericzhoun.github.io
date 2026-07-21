@@ -30,6 +30,7 @@ CONFIGS=(
   "manage-students|required|/manage-students|false|Student profile CRUD. Parents manage their own children; admin can manage any.",
   "manage-artwork|required|/manage-artwork|false|Artwork photo lifecycle: presigned upload/download URLs and delete, gated on student ownership. Storage calls use the service key."
   "sync-student-ages|none||false|Refreshes enrollment ages from dates of birth once a day."
+  "trigger-schedule-bake|none|/trigger-schedule-bake|false|Admin-only (checked against the service key, not ctx.user): dispatches the bake-schedule GitHub Actions workflow to refresh schedule.html's baked snapshot on demand."
 )
 
 deploy_one() {
@@ -53,8 +54,14 @@ payload = {
     "allow_service_key_impersonation": impersonation == "true",
     # SERVICE_KEY: the platform does not inject a REST-usable service key into
     # ctx.env, so functions that call billing endpoints receive it here
-    # (encrypted at rest, never in the repo).
-    "envVars": {"SITE_URL": "https://olivistart.com", "SERVICE_KEY": os.environ["BUTTERBASE_API_KEY"]},
+    # (encrypted at rest, never in the repo). GITHUB_TOKEN: only read by
+    # trigger-schedule-bake; optional for every other function, so deploys
+    # without it in the environment still succeed.
+    "envVars": {
+        "SITE_URL": "https://olivistart.com",
+        "SERVICE_KEY": os.environ["BUTTERBASE_API_KEY"],
+        "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
+    },
 }
 json.dump(payload, sys.stdout)
 PY

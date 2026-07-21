@@ -24,6 +24,15 @@ BUTTERBASE_API_KEY=bb_sk_... ./backend/deploy.sh guest-enroll   # one
 The key is the app service key (Butterbase dashboard). It bypasses RLS;
 never commit it or ship it to the frontend.
 
+`trigger-schedule-bake` additionally needs a `GITHUB_TOKEN` (a fine-grained
+PAT scoped to this repo with Actions: write) in the environment when
+deploying it, so it can dispatch the `bake-schedule.yml` workflow on the
+admin's behalf:
+
+```bash
+BUTTERBASE_API_KEY=bb_sk_... GITHUB_TOKEN=github_pat_... ./backend/deploy.sh trigger-schedule-bake
+```
+
 ## Checkout flows
 
 - Logged-in: `enroll-guard` (auth required) creates a pending enrollment for

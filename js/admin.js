@@ -151,11 +151,22 @@ async function crud(id) {
     }).join("")
     : items.map((item) => `<tr>${c.cols.map((key) => `<td>${esc(displayValue(item, key))}</td>`).join("")}<td>${button("Edit", `edit:${item.id}`)} ${button("Delete", `delete:${item.id}`, "btn btn-sm btn-danger")}</td></tr>`).join("");
   const headers = id === "schedules" ? [c.labels[0], "Actions", ...c.labels.slice(1)] : c.labels.concat("Actions");
-  app.innerHTML = `<div class="admin-crud-header"><h1>${c.title}</h1>${button(`+ New ${c.title.slice(0,-1)}`, "new-record")}</div><div id="form-slot"></div>${table(headers, tableRows)}`;
+  const publishButton = id === "schedules" ? button("Publish schedule now", "publish-schedule", "btn btn-sm btn-secondary") : "";
+  app.innerHTML = `<div class="admin-crud-header"><h1>${c.title}</h1>${publishButton}${button(`+ New ${c.title.slice(0,-1)}`, "new-record")}</div><div id="form-slot"></div>${table(headers, tableRows)}`;
   app.addEventListener("click", crudActions, { once: true });
   async function crudActions(e) {
     const action = e.target.dataset.action || "";
-    if (action === "new-record") {
+    if (action === "publish-schedule") {
+      e.target.disabled = true;
+      e.target.textContent = "Publishing…";
+      try {
+        await adminApi("fn/trigger-schedule-bake", { method: "POST", body: {} });
+        notify("Schedule publish triggered. schedule.html will update in about a minute.");
+      } catch (error) {
+        alert(error.message || "Could not trigger the schedule publish.");
+      }
+      render();
+    } else if (action === "new-record") {
       document.querySelector("#form-slot").innerHTML = id === "schedules" ? scheduleForm({}, programs, semesters, "New Class Schedules") : id === "programs" ? programForm({}, "New Program") : form(c.fields, {}, `New ${c.title.slice(0,-1)}`);
       bindForm();
     } else if (action.startsWith("copy-group:")) {
