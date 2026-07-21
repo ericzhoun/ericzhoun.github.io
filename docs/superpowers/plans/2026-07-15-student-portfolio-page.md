@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - No build tooling, no JS framework, no package.json — plain static files only.
-- Three program accent colors are canonical and must be used consistently: Visual Discovery `#c2255c` (`--color-visual-discovery`), Creative Foundations `#7e8b3d` (`--color-creative-foundations`), Portfolio Studio `#c08a28` (`--color-portfolio-studio`).
+- Three program accent colors are canonical and must be used consistently: Visual Discovery `#cc7013` (`--color-visual-discovery`), Creative Foundations `#7e8b3d` (`--color-creative-foundations`), Portfolio Studio `#c08a28` (`--color-portfolio-studio`).
 - Reuse existing CSS custom properties (`--radius`, `--color-border`, `--color-surface`, `--font-heading`) rather than introducing new tokens.
 - Images come only from the existing `assets/art-class/` directory — no new images are sourced. `assets/art-class/artQrCode.jpg` is excluded (it's a QR code, not student artwork).
 - Captions are generic ("Student artwork from `<Program Name>`") since there is no real per-piece metadata — this is a documented placeholder, not a gap to silently fill in later.

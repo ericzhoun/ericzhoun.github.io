@@ -3,7 +3,7 @@
   --color-surface: #ffffff;
   --color-text: #2b2b2b;
   --color-text-muted: #5a5a5a;
-  --color-visual-discovery: #c2255c;
+  --color-visual-discovery: #cc7013;
   --color-creative-foundations: #7e8b3d;
   --color-portfolio-studio: #c08a28;
   --color-young-photographer: #9b7bc4;
@@ -791,7 +791,7 @@ textarea {
 
 .philosophy-teaser blockquote {
   font-family: var(--font-heading);
-  font-size: 2.5rem;
+  font-size: 2rem;
   font-weight: 600;
   margin: 0 0 16px;
   color: var(--color-creative-foundations);

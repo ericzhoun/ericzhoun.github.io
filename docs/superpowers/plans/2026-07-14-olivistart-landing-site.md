@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - No build tooling, no JS framework, no package.json — plain static files only.
-- Three program accent colors are canonical and must be used consistently everywhere they appear: Visual Discovery `#c2255c` (maroon/pink), Creative Foundations `#7e8b3d` (olive green), Portfolio Studio `#c08a28` (gold/mustard).
+- Three program accent colors are canonical and must be used consistently everywhere they appear: Visual Discovery `#cc7013` (maroon/pink), Creative Foundations `#7e8b3d` (olive green), Portfolio Studio `#c08a28` (gold/mustard).
 - Program CTA buttons link to `contact.html`, never `mailto:` directly.
 - No pricing, business hours, phone number, or multi-location content — none of this exists for OliVista.
 - The WeChat QR image must be downloaded from the signed URL in the existing `qr-code.html` only after explicit user permission (state filename, source URL, and that it's needed because the current signed URL expires ~2026-07-19). Never skip this confirmation step.
@@ -40,7 +40,7 @@
   --color-surface: #ffffff;
   --color-text: #2b2b2b;
   --color-text-muted: #5a5a5a;
-  --color-visual-discovery: #c2255c;
+  --color-visual-discovery: #cc7013;
   --color-creative-foundations: #7e8b3d;
   --color-portfolio-studio: #c08a28;
   --color-border: #e6e1d8;
@@ -699,10 +699,10 @@ git commit -m "Add Home page content"
 
 ```svg
 <svg viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Illustration of an open sketchbook with a sun doodle">
-  <rect x="20" y="60" width="200" height="140" rx="12" fill="none" stroke="#c2255c" stroke-width="4"/>
-  <line x1="120" y1="60" x2="120" y2="200" stroke="#c2255c" stroke-width="4"/>
-  <circle cx="80" cy="115" r="18" fill="none" stroke="#c2255c" stroke-width="4"/>
-  <g stroke="#c2255c" stroke-width="4" stroke-linecap="round">
+  <rect x="20" y="60" width="200" height="140" rx="12" fill="none" stroke="#cc7013" stroke-width="4"/>
+  <line x1="120" y1="60" x2="120" y2="200" stroke="#cc7013" stroke-width="4"/>
+  <circle cx="80" cy="115" r="18" fill="none" stroke="#cc7013" stroke-width="4"/>
+  <g stroke="#cc7013" stroke-width="4" stroke-linecap="round">
     <line x1="80" y1="83" x2="80" y2="73"/>
     <line x1="80" y1="157" x2="80" y2="147"/>
     <line x1="52" y1="115" x2="42" y2="115"/>
@@ -712,8 +712,8 @@ git commit -m "Add Home page content"
     <line x1="59" y1="136" x2="52" y2="143"/>
     <line x1="101" y1="94" x2="108" y2="87"/>
   </g>
-  <path d="M150 165 Q160 135 175 165 Q185 145 195 165" fill="none" stroke="#c2255c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  <line x1="150" y1="180" x2="200" y2="180" stroke="#c2255c" stroke-width="4" stroke-linecap="round"/>
+  <path d="M150 165 Q160 135 175 165 Q185 145 195 165" fill="none" stroke="#cc7013" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="150" y1="180" x2="200" y2="180" stroke="#cc7013" stroke-width="4" stroke-linecap="round"/>
 </svg>
 ```
 
