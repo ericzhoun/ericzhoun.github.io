@@ -7,6 +7,10 @@
 // the frontend can route to login (which uses enroll-guard instead).
 // HTTP trigger: auth "none" (public). Pricing is computed server-side from the
 // database; client-sent prices are never trusted.
+const EARLY_BIRD_MIN_CLASSES = 15;
+const EARLY_BIRD_DEADLINE = "2026-08-15T00:00:00-07:00";
+const EARLY_BIRD_PCT = 10;
+
 export async function handler(req, ctx) {
   let body;
   try { body = await req.json(); } catch {
@@ -27,9 +31,7 @@ export async function handler(req, ctx) {
 
   // 1. Schedule + program (pricing source of truth)
   const scheduleRes = await ctx.db.query(
-    `SELECT cs.*, p.name AS program_name, p.num_classes AS program_num_classes,
-            p.early_bird_discount_pct AS program_early_bird_pct,
-            p.early_bird_deadline AS program_early_bird_deadline
+    `SELECT cs.*, p.name AS program_name, p.num_classes AS program_num_classes
      FROM class_schedules cs
      JOIN programs p ON cs.program_id = p.id
      WHERE cs.id = $1 AND cs.active = true`,
@@ -56,11 +58,11 @@ export async function handler(req, ctx) {
     return json({ error: "Class is full", spots_available: 0 }, 409);
   }
 
-  // 3. Server-side pricing with early-bird discount
+  // 3. Server-side pricing with the universal early-bird discount:
+  //    10% off when booking 15+ classes before the 2026-08-15 deadline.
   const perClass = schedule.price_cents;
-  const ebPct = schedule.early_bird_discount_pct || schedule.program_early_bird_pct || 0;
-  const ebDeadline = schedule.early_bird_deadline || schedule.program_early_bird_deadline;
-  const isEarlyBird = ebPct > 0 && (!ebDeadline || new Date() <= new Date(ebDeadline));
+  const ebPct = EARLY_BIRD_PCT;
+  const isEarlyBird = numClasses >= EARLY_BIRD_MIN_CLASSES && new Date() <= new Date(EARLY_BIRD_DEADLINE);
   const subtotal = perClass * numClasses;
   const discountAmount = isEarlyBird ? Math.round((subtotal * ebPct) / 100) : 0;
   const total = subtotal - discountAmount;

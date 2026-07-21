@@ -2,6 +2,7 @@
 // Ported from herfield app/art-class/enroll/[scheduleId]/EnrollPageClient.js.
 import { apiGet, callFunction, formatPrice, formatTime, getQueryParam, campBundleQuery, compareDayOfWeek } from "./api.js";
 import { isLoggedIn, getUser, getToken } from "./auth.js";
+import { EARLY_BIRD_MIN_CLASSES, EARLY_BIRD_PCT, computeEarlyBird } from "./pricing.js";
 
 const scheduleId = getQueryParam("schedule");
 const paymentCancelled = getQueryParam("payment") === "cancelled";
@@ -83,15 +84,10 @@ function render() {
   const program = state.program;
   const pricePerClass = schedule ? schedule.price_cents : 0;
   const maxClasses = program ? program.num_classes || 8 : 8;
-  const earlyBirdPct = schedule
-    ? schedule.early_bird_discount_pct || program?.early_bird_discount_pct || 0
-    : 0;
-  const earlyBirdDeadlineRaw = schedule?.early_bird_deadline || program?.early_bird_deadline;
-  const earlyBirdDeadline = earlyBirdDeadlineRaw ? new Date(earlyBirdDeadlineRaw) : null;
-  const isEarlyBird = earlyBirdPct > 0 && (!earlyBirdDeadline || new Date() <= earlyBirdDeadline);
+  const isEarlyBird = computeEarlyBird(state.numClasses);
 
   const subtotal = pricePerClass * state.numClasses;
-  const discountAmount = isEarlyBird ? Math.round((subtotal * earlyBirdPct) / 100) : 0;
+  const discountAmount = isEarlyBird ? Math.round((subtotal * EARLY_BIRD_PCT) / 100) : 0;
   const totalDue = subtotal - discountAmount;
 
   const maxSeats = schedule ? schedule.max_seats : 0;
@@ -175,12 +171,12 @@ function render() {
 
   if (isEarlyBird) {
     const rowDisc = el("div", "pricing-row pricing-discount");
-    rowDisc.appendChild(el("span", "", `Early-bird discount (${earlyBirdPct}%)`));
+    rowDisc.appendChild(el("span", "", `Early-bird discount (${EARLY_BIRD_PCT}%)`));
     rowDisc.appendChild(el("span", "", `−${formatPrice(discountAmount)}`));
     pricing.appendChild(rowDisc);
-  } else if (earlyBirdPct > 0 && earlyBirdDeadline) {
-    pricing.appendChild(el("p", "early-bird-expired muted",
-      `Early-bird discount expired on ${earlyBirdDeadline.toLocaleDateString()}`));
+  } else if (state.numClasses < EARLY_BIRD_MIN_CLASSES) {
+    pricing.appendChild(el("p", "early-bird-hint muted",
+      `Book ${EARLY_BIRD_MIN_CLASSES}+ classes before 8/15/2026 to get ${EARLY_BIRD_PCT}% off.`));
   }
 
   const rowTotal = el("div", "pricing-row pricing-total");

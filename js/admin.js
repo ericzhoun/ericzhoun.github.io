@@ -85,8 +85,7 @@ function scheduleForm(values, programs, semesters, title, isEditing = false) {
     <label>Session type<select name="session_type" id="session-type" required>${Object.entries(SESSION_TYPES).map(([key, type]) => `<option value="${key}" ${key === sessionType ? "selected" : ""}>${type.label}</option>`).join("")}</select></label>
     <div class="form-row"><label>Start time<input name="start_time" id="start-time" type="time" required value="${esc(values.start_time || "10:00")}"></label><label>End time<input name="end_time" id="end-time" type="time" required readonly value="${esc(values.end_time || addMinutes(values.start_time || "10:00", SESSION_TYPES[sessionType].minutes))}"></label></div>
     <div class="form-row"><label>Age group<input name="age_group" required value="${esc(values.age_group || "")}" placeholder="e.g. Ages 6-10"></label><label>Max seats<input name="max_seats" type="number" min="1" required value="${esc(values.max_seats || 8)}"></label></div>
-    <div class="form-row"><label>Price per class ($)<input name="price_dollars" id="price-dollars" type="number" min="0" step="0.01" required value="${esc(priceDollars)}"><span class="hint">Defaults by session type: $35 standard, $42 extended, $56 full. You can adjust it if needed.</span></label><label>Early-bird discount %<input name="early_bird_discount_pct" type="number" min="0" max="100" value="${esc(values.early_bird_discount_pct || 0)}"></label></div>
-    <label>Early-bird deadline<input name="early_bird_deadline" type="date" value="${esc(values.early_bird_deadline ? values.early_bird_deadline.slice(0, 10) : "")}"></label>
+    <label>Price per class ($)<input name="price_dollars" id="price-dollars" type="number" min="0" step="0.01" required value="${esc(priceDollars)}"><span class="hint">Defaults by session type: $35 standard, $42 extended, $56 full. You can adjust it if needed.</span></label>
     <label>Notes<textarea name="notes">${esc(values.notes || "")}</textarea></label>
     <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>${isEditing ? "Update" : "Create schedules"}</button><button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div>
   </form>`;
@@ -109,8 +108,6 @@ function programForm(values, title) {
       <p class="hint">Selected days become this camp's weekly schedule; the class count is calculated automatically.</p>
       <div>${DAYS.map((day) => `<label><input type="checkbox" name="camp_days" value="${day}" ${campDays.includes(day) ? "checked" : ""}> ${day}</label>`).join("")}</div>
     </fieldset>
-    <label>Early-Bird Discount %<input name="early_bird_discount_pct" type="number" value="${esc(values.early_bird_discount_pct || 0)}"></label>
-    <label>Early-Bird Deadline<input name="early_bird_deadline" type="date" value="${esc(values.early_bird_deadline ? values.early_bird_deadline.slice(0, 10) : "")}"></label>
     <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button><button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div>
   </form>`;
 }
@@ -133,7 +130,7 @@ async function crud(id) {
   };
   const dayOrder = Object.fromEntries(DAYS.map((day, index) => [day, index]));
   const scheduleGroups = id === "schedules" ? Object.values(items.reduce((groups, item) => {
-    const key = JSON.stringify([item.program_id, item.semester_id, item.session_type || sessionTypeFor(item), item.start_time, item.end_time, item.age_group, item.price_cents, item.max_seats, item.early_bird_discount_pct, item.early_bird_deadline, item.notes]);
+    const key = JSON.stringify([item.program_id, item.semester_id, item.session_type || sessionTypeFor(item), item.start_time, item.end_time, item.age_group, item.price_cents, item.max_seats, item.notes]);
     if (!groups[key]) groups[key] = { item, members: [] };
     groups[key].members.push(item);
     return groups;
@@ -234,8 +231,8 @@ async function crud(id) {
       const data = new FormData(e.currentTarget);
       const body = Object.fromEntries(data);
       try {
-        ["sort_order", "num_classes", "early_bird_discount_pct", "price_cents", "max_seats"].forEach((k) => { if (k in body) body[k] = Number(body[k]) || 0; });
-        ["early_bird_deadline", "start_date", "end_date"].forEach((key) => {
+        ["sort_order", "num_classes", "price_cents", "max_seats"].forEach((k) => { if (k in body) body[k] = Number(body[k]) || 0; });
+        ["start_date", "end_date"].forEach((key) => {
           if (key in body && !body[key]) body[key] = null;
         });
         body.active = id === "schedules" ? data.get("active") === "on" : true;
