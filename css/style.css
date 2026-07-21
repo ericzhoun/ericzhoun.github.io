@@ -792,12 +792,19 @@ textarea {
 
 .philosophy-teaser blockquote {
   font-family: var(--font-heading);
-  font-size: 2.5rem;
+  font-size: 2rem;
   font-weight: 600;
   margin: 0 0 16px;
   color: var(--color-creative-foundations);
   text-align: center;
 }
+
+.philosophy-teaser .btn {
+  display: block;
+  width: fit-content;
+  margin: 24px auto 0;
+}
+
 
 /* CTA banner */
 .cta-banner {
@@ -860,8 +867,7 @@ textarea {
 }
 
 .program-visual {
-  border-radius: var(--radius);
-  padding: 40px;
+  padding: 4px;
 }
 
 .program-photo {
