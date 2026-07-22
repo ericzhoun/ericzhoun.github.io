@@ -55,10 +55,10 @@ export function parseSnapshot(rawText) {
   return data;
 }
 
-/** Pick the default semester: "Summer 2026" if present, else the first in the list. */
+/** Pick the default semester: "Fall 2026" if present, else the first in the list. */
 export function pickDefaultSemester(semesters) {
-  const summer2026 = semesters.find((s) => s.name.trim().toLowerCase() === "summer 2026");
-  return summer2026 || semesters[0];
+  const fall2026 = semesters.find((s) => s.name.trim().toLowerCase() === "fall 2026");
+  return fall2026 || semesters[0];
 }
 
 const state = {
