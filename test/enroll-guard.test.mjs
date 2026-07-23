@@ -246,7 +246,101 @@ test("enroll-guard (multi-day) accepts and persists a verified student_id", asyn
   }
 });
 
-test("enroll-guard creates one enrollment row per selected day, all sharing one stripe_order_id", async () => {
+test("enroll-guard splits an explicit num_classes_enrolled evenly across selected days, sharing one stripe_order_id", async () => {
+  const bundleRow = (id, day) => ({
+    id, program_id: "prog-1", semester_id: "sem-1", session_type: "standard",
+    start_time: "16:00", end_time: "17:00", age_group: "7-12", price_cents: 3000, max_seats: 10,
+    day_of_week: day, program_name: "Ballet", program_num_classes: 8,
+  });
+  const { ctx, queries } = makeCtx([
+    { rows: [bundleRow("sched-1", "Monday")] },
+    { rows: [bundleRow("sched-2", "Wednesday")] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ id: "enrollment-1" }] },
+    { rows: [{ id: "enrollment-2" }] },
+    { rows: [] },
+  ]);
+  const originalFetch = global.fetch;
+  global.fetch = stubFetch([
+    { id: "product-1" },
+    { orderId: "order-1", url: "https://stripe.test/checkout" },
+  ]);
+
+  try {
+    const response = await handler(request({
+      schedule_ids: ["sched-1", "sched-2"],
+      student_name: "Ada",
+      parent_name: "Grace Hopper",
+      num_classes_enrolled: 12,
+    }), ctx);
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      enrollment_id: "enrollment-1",
+      checkout_url: "https://stripe.test/checkout",
+      total_cents: 36000, // 12 classes x 3000, no early-bird (12 < 15)
+    });
+
+    const inserts = queries.filter((q) => /INSERT INTO enrollments/.test(q.sql));
+    assert.equal(inserts.length, 2);
+    assert.match(inserts[0].sql, /'pending', \$6,/); // num_classes_enrolled is now a bound param, not a literal 1
+    assert.equal(inserts[0].values[5], 6); // sched-1's share of 12 classes across 2 days
+    assert.equal(inserts[0].values[6], 3000); // price_per_class_cents
+    assert.equal(inserts[0].values[8], 18000); // this row's total_paid_cents share (6 x 3000)
+    assert.equal(inserts[1].values[5], 6); // sched-2's share
+    assert.equal(inserts[1].values[8], 18000);
+
+    const updateOrder = queries.find((q) => /UPDATE enrollments SET stripe_order_id/.test(q.sql));
+    assert.match(updateOrder.sql, /WHERE id = ANY\(\$2\)/);
+    assert.deepEqual(updateOrder.values, ["order-1", ["enrollment-1", "enrollment-2"]]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("enroll-guard gives the remainder of an uneven split to the lowest-id schedule(s)", async () => {
+  const bundleRow = (id, day) => ({
+    id, program_id: "prog-1", semester_id: "sem-1", session_type: "standard",
+    start_time: "16:00", end_time: "17:00", age_group: "7-12", price_cents: 3000, max_seats: 10,
+    day_of_week: day, program_name: "Ballet", program_num_classes: 8,
+  });
+  const { ctx, queries } = makeCtx([
+    { rows: [bundleRow("sched-1", "Monday")] },
+    { rows: [bundleRow("sched-2", "Wednesday")] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ id: "enrollment-1" }] },
+    { rows: [{ id: "enrollment-2" }] },
+    { rows: [] },
+  ]);
+  const originalFetch = global.fetch;
+  global.fetch = stubFetch([
+    { id: "product-1" },
+    { orderId: "order-1", url: "https://stripe.test/checkout" },
+  ]);
+
+  try {
+    const response = await handler(request({
+      schedule_ids: ["sched-1", "sched-2"],
+      student_name: "Ada",
+      parent_name: "Grace Hopper",
+      num_classes_enrolled: 11,
+    }), ctx);
+
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).total_cents, 33000); // 11 x 3000, no early-bird
+
+    const inserts = queries.filter((q) => /INSERT INTO enrollments/.test(q.sql));
+    assert.equal(inserts[0].values[5], 6); // sched-1 (lower id) absorbs the odd extra class
+    assert.equal(inserts[1].values[5], 5); // sched-2
+    assert.equal(inserts[0].values[8] + inserts[1].values[8], 33000); // row totals sum exactly, no lost/extra cent
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("enroll-guard defaults multi-day num_classes_enrolled to 15 when absent", async () => {
   const bundleRow = (id, day) => ({
     id, program_id: "prog-1", semester_id: "sem-1", session_type: "standard",
     start_time: "16:00", end_time: "17:00", age_group: "7-12", price_cents: 3000, max_seats: 10,
@@ -275,21 +369,8 @@ test("enroll-guard creates one enrollment row per selected day, all sharing one 
     }), ctx);
 
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      enrollment_id: "enrollment-1",
-      checkout_url: "https://stripe.test/checkout",
-      total_cents: 6000,
-    });
-
     const inserts = queries.filter((q) => /INSERT INTO enrollments/.test(q.sql));
-    assert.equal(inserts.length, 2);
-    assert.match(inserts[0].sql, /'pending', 1,/);
-    assert.equal(inserts[0].values[5], 3000); // price_per_class_cents
-    assert.equal(inserts[0].values[7], 3000); // this row's total_paid_cents share
-
-    const updateOrder = queries.find((q) => /UPDATE enrollments SET stripe_order_id/.test(q.sql));
-    assert.match(updateOrder.sql, /WHERE id = ANY\(\$2\)/);
-    assert.deepEqual(updateOrder.values, ["order-1", ["enrollment-1", "enrollment-2"]]);
+    assert.equal(inserts[0].values[5] + inserts[1].values[5], 15); // splits the 15-class default across both days
   } finally {
     global.fetch = originalFetch;
   }
