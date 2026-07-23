@@ -39,7 +39,11 @@ export async function handler(req, ctx) {
     `UPDATE enrollments
      SET ${sets.length ? sets.join(", ") + "," : ""}
          agreement_signed = true, agreement_date = now(), registration_complete = true
-     WHERE id = $${values.length - 1} AND user_id = $${values.length}
+     WHERE user_id = $${values.length}
+       AND (
+         id = $${values.length - 1}
+         OR stripe_order_id = (SELECT stripe_order_id FROM enrollments WHERE id = $${values.length - 1} AND user_id = $${values.length})
+       )
      RETURNING id`,
     values
   );
