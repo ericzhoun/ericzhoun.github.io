@@ -30,3 +30,16 @@ test("enroll.js sends parent_name to both enroll-guard and guest-enroll", async 
   const matches = script.match(/parent_name: state\.parentName/g) || [];
   assert.equal(matches.length, 2);
 });
+
+test("enroll.js loads the account's students for logged-in parents", async () => {
+  const script = await readEnroll();
+  assert.match(script, /callFunction\("manage-students", \{ action: "list" \}, token\)/);
+  assert.match(script, /state\.students = data\.students \|\| \[\]/);
+});
+
+test("enroll.js offers a student dropdown with an Other / New student fallback", async () => {
+  const script = await readEnroll();
+  assert.match(script, /Other \/ New student/);
+  assert.match(script, /state\.studentId = null/);
+  assert.match(script, /state\.students\.length > 0/);
+});

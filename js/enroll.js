@@ -16,6 +16,8 @@ const state = {
   error: "",
   enrolling: false,
   parentName: "",
+  students: [],
+  studentId: null,
   studentName: "",
   studentEmail: "",
   studentPhone: "",
@@ -228,14 +230,55 @@ function render() {
     form.appendChild(lblParent);
 
     const lblName = el("label", "", "Student Name");
-    const inpName = document.createElement("input");
-    inpName.type = "text";
-    inpName.value = state.studentName;
-    inpName.required = true;
-    inpName.placeholder = "Student's full name";
-    inpName.oninput = (e) => (state.studentName = e.target.value);
-    lblName.appendChild(inpName);
-    form.appendChild(lblName);
+    if (state.students.length > 0) {
+      const select = document.createElement("select");
+      state.students.forEach((s) => {
+        const opt = document.createElement("option");
+        opt.value = s.id;
+        opt.textContent = s.name;
+        if (state.studentId === s.id) opt.selected = true;
+        select.appendChild(opt);
+      });
+      const optOther = document.createElement("option");
+      optOther.value = "__other__";
+      optOther.textContent = "Other / New student";
+      if (!state.studentId) optOther.selected = true;
+      select.appendChild(optOther);
+      select.onchange = (e) => {
+        if (e.target.value === "__other__") {
+          state.studentId = null;
+          state.studentName = "";
+        } else {
+          const chosen = state.students.find((s) => s.id === e.target.value);
+          state.studentId = chosen.id;
+          state.studentName = chosen.name;
+        }
+        render();
+      };
+      lblName.appendChild(select);
+      form.appendChild(lblName);
+
+      if (!state.studentId) {
+        const lblOther = el("label", "", "New Student Name");
+        const inpOther = document.createElement("input");
+        inpOther.type = "text";
+        inpOther.value = state.studentName;
+        inpOther.required = true;
+        inpOther.placeholder = "Student's full name";
+        inpOther.oninput = (e) => (state.studentName = e.target.value);
+        lblOther.appendChild(inpOther);
+        form.appendChild(lblOther);
+      }
+    } else {
+      const inpName = document.createElement("input");
+      inpName.type = "text";
+      inpName.value = state.studentName;
+      inpName.required = true;
+      inpName.placeholder = "Student's full name";
+      inpName.oninput = (e) => (state.studentName = e.target.value);
+      lblName.appendChild(inpName);
+      form.appendChild(lblName);
+    }
 
     const lblPhone = el("label", "", "Phone Number");
     const inpPhone = document.createElement("input");
@@ -294,6 +337,7 @@ async function handleEnroll(e) {
           student_email: state.user.email || "",
           student_phone: state.studentPhone,
           parent_name: state.parentName,
+          student_id: state.studentId,
           num_classes_enrolled: state.numClasses,
         },
         getToken()
@@ -360,6 +404,13 @@ async function init() {
     if (isLoggedIn()) {
       state.user = getUser();
       state.parentName = state.user.display_name || state.user.email || "";
+      const token = getToken();
+      try {
+        const data = await callFunction("manage-students", { action: "list" }, token);
+        state.students = data.students || [];
+      } catch {
+        state.students = [];
+      }
     }
   } catch (err) {
     state.error = err.message;

@@ -2101,6 +2101,17 @@ textarea {
   border-radius: 6px;
 }
 
+.enroll-form select {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--color-text);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  border-radius: 6px;
+}
+
 .enroll-disclaimer {
   text-align: center;
   margin-top: 0.5rem;
