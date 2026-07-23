@@ -22,10 +22,19 @@ picker.
 ## Scope
 
 In scope:
-- Rename the day-part picker to **"Class Time"**. It always shows the
-  matched day-part(s) (today's `campBundleQuery`/`looseBundleQuery`
-  matching logic is unchanged): a read-only slot when there's exactly one
-  match, or the existing checkboxes when there are 2+.
+- Rename the day-part picker to **"Class Time"**, and merge it with the
+  existing single-match display rather than duplicating it:
+  - Exactly one matched schedule (today's common case): no new row in
+    the pricing section. Instead, the existing "Time" detail row above
+    the pricing section (`js/enroll.js:139-144`) is relabeled "Class
+    Time" and continues to be the only place that slot is shown.
+  - 2+ matched schedules: the existing checkboxes (today living in the
+    "Number of classes" pricing row) move under a "Class Time" label,
+    unchanged behavior otherwise. The "Day" detail row above still shows
+    the selected days as a plain summary (today's behavior, unchanged);
+    the checkboxes are the interactive control, the detail row is the
+    read-only recap - these two are not merged, only the single-match
+    case is.
 - Add an independent **"Number of Classes"** stepper: default 15, minimum
   10, applies to both single-schedule and multi-day (non-camp) modes.
 - Backend: distribute the "Number of Classes" total evenly across however
@@ -37,13 +46,8 @@ In scope:
 
 Out of scope:
 - Camp programs: unchanged (fixed `campDays`, fixed non-adjustable count).
-- The "Day" / "Time" detail rows above the pricing section
-  (`js/enroll.js:129-144`). They keep showing today's summary. For the
-  single-schedule case this means the Time row and the new read-only
-  Class Time row both show the same slot - accepted as a minor
-  redundancy rather than removing/merging those rows, since this spec is
-  scoped to the pricing section. Flagging this now in case you'd rather
-  fold Class Time into the existing Day/Time rows instead.
+- The "Day" detail row above the pricing section (`js/enroll.js:129-134`):
+  unchanged, keeps showing today's summary in every mode.
 - Any change to the early-bird threshold or percentage
   (`EARLY_BIRD_MIN_CLASSES = 15`, `EARLY_BIRD_PCT = 10` in
   `js/pricing.js` and duplicated in both backend functions) - the new
@@ -63,18 +67,20 @@ Out of scope:
   `state.selectedScheduleIds` (multi-day) continues to mean "which
   day-parts," independently.
 
-### "Class Time" row (replaces today's day-checkbox block at lines 181-198)
+### "Class Time" - single match: relabel the existing detail row
 
-Always rendered for non-camp schedules, regardless of how many siblings
-matched:
+`js/enroll.js:140-144` (the "Time" detail row, currently only rendered
+when `state.siblingSchedules.length <= 1`): change its label from `"Time"`
+to `"Class Time"`. No other change to that row - still shown only in the
+single-match case, still just above the pricing section. Nothing is added
+to the pricing section for this case.
 
-- Exactly one matched schedule (today's common case, no siblings): a
-  read-only `<span>` showing `${schedule.day_of_week}
-  ${formatTime(schedule.start_time)}-${formatTime(schedule.end_time)}`.
-- 2+ matched schedules: today's checkboxes, relabeled under "Class Time"
-  instead of "Number of classes" - unchanged behavior (toggle
-  `state.selectedScheduleIds`, minimum one day stays checked by disabling
-  its checkbox, as today).
+### "Class Time" - 2+ matches: relabel the existing checkbox block
+
+`js/enroll.js:181-198` (today rendered inside the "Number of classes"
+pricing row): move to its own pricing row labeled "Class Time" -
+otherwise unchanged (toggle `state.selectedScheduleIds`, minimum one day
+stays checked by disabling its checkbox, as today).
 
 Camp: unchanged fixed `campDays` display, under whatever label the camp
 branch already uses (no rename needed there - "not adjustable" note stays
@@ -209,9 +215,10 @@ change needed there beyond what's shown above.
   (no lost/extra cent), early-bird applies once to the combined total
   when the total (not day count) crosses 15.
 - Unit tests (frontend): `getNumClasses()` returns `state.numClasses` in
-  all three modes; Class Time read-only display appears with exactly one
-  match, checkboxes with 2+; stepper min/max clamp correctly including
-  the `program.num_classes` interaction.
+  all three modes; single-match case shows the relabeled "Class Time"
+  detail row and no pricing-section duplicate; 2+ match case shows the
+  "Class Time" checkboxes in the pricing section; stepper min/max clamp
+  correctly including the `program.num_classes` interaction.
 - Manual E2E: as a logged-in parent, open a class with Mon/Wed siblings,
   confirm "Class Time" shows both day checkboxes (both checked by
   default per existing behavior) and a separate "Number of Classes"
