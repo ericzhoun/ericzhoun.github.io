@@ -129,6 +129,64 @@ test("enroll-guard rejects the whole multi-day request when any selected day is 
   assert.equal(queries.some((q) => /INSERT INTO enrollments/.test(q.sql)), false);
 });
 
+test("enroll-guard (multi-day) rejects a student_id that does not belong to the caller", async () => {
+  const { ctx, queries } = makeCtx([
+    { rows: [] },
+  ]);
+
+  const response = await handler(request({
+    schedule_ids: ["sched-1", "sched-2"],
+    student_name: "Ada",
+    student_id: "someone-elses-student",
+  }), ctx);
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Student not found" });
+  assert.equal(queries.some((q) => /INSERT INTO enrollments/.test(q.sql)), false);
+});
+
+test("enroll-guard (multi-day) accepts and persists a verified student_id", async () => {
+  const bundleRow = (id, day) => ({
+    id, program_id: "prog-1", semester_id: "sem-1", session_type: "standard",
+    start_time: "16:00", end_time: "17:00", age_group: "7-12", price_cents: 3000, max_seats: 10,
+    day_of_week: day, program_name: "Ballet", program_num_classes: 8,
+  });
+  const { ctx, queries } = makeCtx([
+    { rows: [{ id: "student-1" }] },
+    { rows: [bundleRow("sched-1", "Monday")] },
+    { rows: [bundleRow("sched-2", "Wednesday")] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ id: "enrollment-1" }] },
+    { rows: [{ id: "enrollment-2" }] },
+    { rows: [] },
+  ]);
+  const originalFetch = global.fetch;
+  global.fetch = stubFetch([
+    { id: "product-1" },
+    { orderId: "order-1", url: "https://stripe.test/checkout" },
+  ]);
+
+  try {
+    const response = await handler(request({
+      schedule_ids: ["sched-1", "sched-2"],
+      student_name: "Ada",
+      parent_name: "Grace Hopper",
+      student_id: "student-1",
+    }), ctx);
+
+    assert.equal(response.status, 200);
+
+    const inserts = queries.filter((q) => /INSERT INTO enrollments/.test(q.sql));
+    assert.equal(inserts.length, 2);
+    assert.match(inserts[0].sql, /student_id/);
+    assert.equal(inserts[0].values.at(-1), "student-1");
+    assert.equal(inserts[1].values.at(-1), "student-1");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("enroll-guard creates one enrollment row per selected day, all sharing one stripe_order_id", async () => {
   const bundleRow = (id, day) => ({
     id, program_id: "prog-1", semester_id: "sem-1", session_type: "standard",
