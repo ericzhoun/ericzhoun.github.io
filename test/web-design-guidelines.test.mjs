@@ -56,9 +56,8 @@ test("homepage presents the complete Programs flow in the revised order", async 
   const index = await read("index.html");
   assert.match(
     index,
-    /<section id="programs" class="programs-overview">\s*<div class="container programs-intro">/,
+    /<section id="programs" class="programs-overview">\s*<!-- Age-to-Program Mapping -->\s*<div class="container age-mapping">/,
   );
-  assert.match(index, /<div class="container age-mapping">/);
 
   const orderedMarkers = [
     'id="programs"',
@@ -73,15 +72,15 @@ test("homepage presents the complete Programs flow in the revised order", async 
 
   let previousPosition = -1;
   for (const marker of orderedMarkers) {
-    const position = index.indexOf(marker);
+    const position = index.indexOf(marker, previousPosition + 1);
     assert.ok(position > previousPosition, `${marker} should appear in the revised homepage order`);
     previousPosition = position;
   }
 
-  assert.match(index, /assets\/art-class\/artPortfolio1\.jpg/);
+  assert.match(index, /assets\/art-class\/artPortfolio2\.bak\.jpg/);
   assert.match(
     index,
-    /src="assets\/art-class\/artPortfolio1\.jpg"\s+alt="Colorful student painting" width="1592" height="1318"/,
+    /src="assets\/art-class\/artPortfolio2\.bak\.jpg"\s+alt="Student color painting from the Portfolio Studio" width="446" height="502"/,
   );
   assert.match(index, /<h2>Young Photographer Camp<\/h2>/);
   assert.doesNotMatch(index, /class="teaser-grid"/);

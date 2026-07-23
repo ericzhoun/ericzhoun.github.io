@@ -113,7 +113,7 @@ test("parseSnapshot returns null for missing, empty, or malformed snapshot data"
   assert.deepEqual(parseSnapshot(valid), JSON.parse(valid));
 });
 
-test("pickDefaultSemester prefers Summer 2026, else falls back to the first semester", async () => {
+test("pickDefaultSemester prefers Fall 2026, else falls back to the first semester", async () => {
   const script = await readSchedule();
   const match = script.match(/export function pickDefaultSemester[\s\S]*?\n}\n/);
   assert.ok(match, "pickDefaultSemester helper should be exported");
@@ -121,7 +121,7 @@ test("pickDefaultSemester prefers Summer 2026, else falls back to the first seme
   const moduleUrl = new URL(`data:text/javascript,${encodeURIComponent(`${match[0]}\nexport default pickDefaultSemester;`)}`);
   const { default: pickDefaultSemester } = await import(moduleUrl);
 
-  const semesters = [{ id: "s1", name: "Fall 2025" }, { id: "s2", name: "Summer 2026" }];
+  const semesters = [{ id: "s1", name: "Summer 2026" }, { id: "s2", name: "Fall 2026" }];
   assert.equal(pickDefaultSemester(semesters).id, "s2");
   assert.equal(pickDefaultSemester([{ id: "s3", name: "Fall 2025" }]).id, "s3");
 });
