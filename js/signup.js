@@ -19,6 +19,7 @@ const resendLink = document.getElementById("resend-link");
 // "collect" = gathering name + email, "verify" = waiting for 6-digit code
 let step = "collect";
 let savedEmail = "";
+let savedName = "";
 
 // Already logged in? Bounce to the return target (or account).
 if (isLoggedIn()) {
@@ -61,7 +62,7 @@ resendLink.addEventListener("click", async (e) => {
   errEl.hidden = true;
   resendLink.textContent = "Sending…";
   try {
-    await sendMagicLink(savedEmail);
+    await sendMagicLink(savedEmail, savedName);
     showInfo("New code sent! Check your email.");
   } catch (err) {
     showError(err.message);
@@ -82,10 +83,12 @@ form.addEventListener("submit", async (e) => {
   try {
     if (step === "collect") {
       const email = document.getElementById("email").value.trim().toLowerCase();
+      const name = document.getElementById("name").value.trim();
       savedEmail = email;
+      savedName = name;
 
       // Send verification code to the email
-      await sendMagicLink(email);
+      await sendMagicLink(email, name);
 
       // Move to verification step
       switchToVerify();
@@ -97,7 +100,7 @@ form.addEventListener("submit", async (e) => {
         showError("Please enter the 6-digit code from your email.");
         return;
       }
-      await verifyMagicLink(savedEmail, code);
+      await verifyMagicLink(savedEmail, code, savedName);
       await finishSignup();
       return;
     }

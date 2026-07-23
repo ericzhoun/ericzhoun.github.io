@@ -72,12 +72,16 @@ export async function signup(email, password, displayName) {
   return getUser();
 }
 
-/** Email a 6-digit sign-in code (works for new and existing accounts). */
-export async function sendMagicLink(email) {
+/** Email a 6-digit sign-in code (works for new and existing accounts).
+ *  `displayName`, when given, is forwarded so a brand-new account gets a
+ *  name on creation instead of defaulting to the email address. */
+export async function sendMagicLink(email, displayName) {
+  const body = { email };
+  if (displayName) body.display_name = displayName;
   const res = await fetchWithTimeout(`${AUTH_BASE}/magic-link`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify(body),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || data.message || "Could not send code");
@@ -87,8 +91,12 @@ export async function sendMagicLink(email) {
 /**
  * Exchange a 6-digit code for tokens. Creates the account on first use,
  * signs into the existing account otherwise. Stores tokens like login().
+ * `fallbackDisplayName`, when given, fills in `display_name` locally if the
+ * server's response doesn't have one (e.g. left unset or equal to the
+ * email) — the typed name the parent already gave us during signup should
+ * never be lost just because the server didn't persist it.
  */
-export async function verifyMagicLink(email, code) {
+export async function verifyMagicLink(email, code, fallbackDisplayName) {
   const res = await fetchWithTimeout(`${AUTH_BASE}/magic-link/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -96,6 +104,9 @@ export async function verifyMagicLink(email, code) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || data.message || "Invalid code");
+  if (fallbackDisplayName && (!data.user.display_name || data.user.display_name === data.user.email)) {
+    data.user.display_name = fallbackDisplayName;
+  }
   localStorage.setItem(TOKEN_KEY, data.access_token);
   localStorage.setItem(REFRESH_KEY, data.refresh_token);
   localStorage.setItem(USER_KEY, JSON.stringify(data.user));
