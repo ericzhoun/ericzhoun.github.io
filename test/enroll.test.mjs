@@ -43,3 +43,20 @@ test("enroll.js offers a student dropdown with an Other / New student fallback",
   assert.match(script, /state\.studentId = null/);
   assert.match(script, /state\.students\.length > 0/);
 });
+
+test("enroll.js detects non-camp sibling schedules and defaults to only the clicked day selected", async () => {
+  const script = await readEnroll();
+  assert.match(script, /\} else if \(siblings\.length > 1\) \{/);
+  assert.match(script, /state\.selectedScheduleIds = new Set\(\[scheduleId\]\)/);
+  assert.match(script, /function getNumClasses\(\)/);
+});
+
+test("enroll.js prevents unchecking the only remaining selected day", async () => {
+  const script = await readEnroll();
+  assert.match(script, /cb\.disabled = cb\.checked && state\.selectedScheduleIds\.size === 1/);
+});
+
+test("enroll.js submits schedule_ids instead of schedule_id when multiple days are selected", async () => {
+  const script = await readEnroll();
+  assert.match(script, /schedule_ids: \[\.\.\.state\.selectedScheduleIds\]/);
+});

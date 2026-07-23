@@ -2222,6 +2222,19 @@ textarea {
   font-size: 0.8rem;
 }
 
+.day-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.day-checkboxes .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
 .session-badge {
   display: inline-block;
   background: var(--color-visual-discovery);

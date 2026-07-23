@@ -24,6 +24,8 @@ const state = {
   numClasses: 8,
   isCamp: false,
   campDays: [],
+  siblingSchedules: [],
+  selectedScheduleIds: new Set(),
 };
 
 const root = document.getElementById("enroll-root");
@@ -33,6 +35,17 @@ function el(tag, className, html) {
   if (className) e.className = className;
   if (html != null) e.innerHTML = html;
   return e;
+}
+
+function getNumClasses() {
+  if (state.siblingSchedules.length > 1) return Math.max(1, state.selectedScheduleIds.size);
+  return state.numClasses;
+}
+
+function selectedDayNames() {
+  return state.siblingSchedules
+    .filter((s) => state.selectedScheduleIds.has(s.id))
+    .map((s) => s.day_of_week);
 }
 
 function render() {
@@ -87,9 +100,9 @@ function render() {
   const program = state.program;
   const pricePerClass = schedule ? schedule.price_cents : 0;
   const maxClasses = program ? program.num_classes || 8 : 8;
-  const isEarlyBird = computeEarlyBird(state.numClasses);
+  const isEarlyBird = computeEarlyBird(getNumClasses());
 
-  const subtotal = pricePerClass * state.numClasses;
+  const subtotal = pricePerClass * getNumClasses();
   const discountAmount = isEarlyBird ? Math.round((subtotal * EARLY_BIRD_PCT) / 100) : 0;
   const totalDue = subtotal - discountAmount;
 
@@ -103,7 +116,9 @@ function render() {
 
     const rowDay = el("div", "detail-row");
     rowDay.appendChild(el("span", "detail-label", "Day"));
-    rowDay.appendChild(el("span", "", state.isCamp ? state.campDays.join(", ") : schedule.day_of_week));
+    rowDay.appendChild(el("span", "", state.isCamp ? state.campDays.join(", ")
+      : state.siblingSchedules.length > 1 ? selectedDayNames().join(", ")
+      : schedule.day_of_week));
     details.appendChild(rowDay);
 
     const rowTime = el("div", "detail-row");
@@ -146,6 +161,24 @@ function render() {
   if (state.isCamp) {
     rowClasses.appendChild(el("span", "num-classes-value",
       `${state.numClasses} (${state.campDays.join(", ")} - included, not adjustable)`));
+  } else if (state.siblingSchedules.length > 1) {
+    const dayCheckboxes = el("div", "day-checkboxes");
+    state.siblingSchedules.forEach((sib) => {
+      const lbl = el("label", "checkbox-label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = state.selectedScheduleIds.has(sib.id);
+      cb.disabled = cb.checked && state.selectedScheduleIds.size === 1;
+      cb.onchange = (e) => {
+        if (e.target.checked) state.selectedScheduleIds.add(sib.id);
+        else state.selectedScheduleIds.delete(sib.id);
+        render();
+      };
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(` ${sib.day_of_week}`));
+      dayCheckboxes.appendChild(lbl);
+    });
+    rowClasses.appendChild(dayCheckboxes);
   } else {
     const ctrl = el("div", "num-classes-control");
     const minusBtn = el("button", "", "−");
@@ -177,7 +210,7 @@ function render() {
     rowDisc.appendChild(el("span", "", `Early-bird discount (${EARLY_BIRD_PCT}%)`));
     rowDisc.appendChild(el("span", "", `−${formatPrice(discountAmount)}`));
     pricing.appendChild(rowDisc);
-  } else if (state.numClasses < EARLY_BIRD_MIN_CLASSES) {
+  } else if (getNumClasses() < EARLY_BIRD_MIN_CLASSES) {
     pricing.appendChild(el("p", "early-bird-hint muted",
       `Book ${EARLY_BIRD_MIN_CLASSES}+ classes before 8/15/2026 to get ${EARLY_BIRD_PCT}% off.`));
   }
@@ -327,30 +360,33 @@ async function handleEnroll(e) {
   state.enrolling = true;
   render();
   try {
+    const multiDay = state.siblingSchedules.length > 1;
+    const scheduleParams = multiDay
+      ? { schedule_ids: [...state.selectedScheduleIds] }
+      : { schedule_id: scheduleId, num_classes_enrolled: state.numClasses };
+
     let result;
     if (state.user) {
       result = await callFunction(
         "enroll-guard",
         {
-          schedule_id: scheduleId,
+          ...scheduleParams,
           student_name: state.studentName,
           student_email: state.user.email || "",
           student_phone: state.studentPhone,
           parent_name: state.parentName,
           student_id: state.studentId,
-          num_classes_enrolled: state.numClasses,
         },
         getToken()
       );
     } else {
       const email = state.studentEmail.trim().toLowerCase();
       result = await callFunction("guest-enroll", {
-        schedule_id: scheduleId,
+        ...scheduleParams,
         student_name: state.studentName,
         student_email: email,
         student_phone: state.studentPhone,
         parent_name: state.parentName,
-        num_classes_enrolled: state.numClasses,
       });
       // Prefill the claim step on the post-payment page (never in the URL).
       try { sessionStorage.setItem("olivistart_pending_email", email); } catch { /* private mode */ }
@@ -390,11 +426,14 @@ async function init() {
       state.numClasses = prog[0].num_classes || 8;
     }
 
+    const siblings = await apiGet(campBundleQuery(state.schedule));
     if (state.program?.program_type === "camp") {
       state.isCamp = true;
-      const siblings = await apiGet(campBundleQuery(state.schedule));
       state.campDays = siblings.map((s) => s.day_of_week).sort(compareDayOfWeek);
       state.numClasses = siblings.length || 1;
+    } else if (siblings.length > 1) {
+      state.siblingSchedules = [...siblings].sort((a, b) => compareDayOfWeek(a.day_of_week, b.day_of_week));
+      state.selectedScheduleIds = new Set([scheduleId]);
     }
 
     // Seat availability (confirmed + fresh pending holds). Anonymous REST
