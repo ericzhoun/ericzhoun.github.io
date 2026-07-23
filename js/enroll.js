@@ -47,8 +47,9 @@ function getNumClasses() {
 // slot needs to be called out rather than silently assumed identical.
 function formatDayLabel(sibling) {
   const base = state.schedule;
+  const isClickedSchedule = sibling.id === scheduleId;
   const differentTime = base && (sibling.start_time !== base.start_time || sibling.end_time !== base.end_time);
-  return differentTime
+  return (isClickedSchedule || differentTime)
     ? `${sibling.day_of_week} ${formatTime(sibling.start_time)}–${formatTime(sibling.end_time)}`
     : sibling.day_of_week;
 }

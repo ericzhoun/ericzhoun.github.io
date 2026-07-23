@@ -52,9 +52,10 @@ test("enroll.js detects non-camp sibling schedules via a loose (time-independent
   assert.match(script, /function getNumClasses\(\)/);
 });
 
-test("enroll.js marks a sibling day's time only when it differs from the clicked schedule's time", async () => {
+test("enroll.js marks a sibling day's time when it differs from the clicked schedule's time, or when it is the clicked schedule itself", async () => {
   const script = await readEnroll();
   assert.match(script, /function formatDayLabel\(sibling\)/);
+  assert.match(script, /sibling\.id === scheduleId/);
   assert.match(script, /sibling\.start_time !== base\.start_time \|\| sibling\.end_time !== base\.end_time/);
   assert.match(script, /formatDayLabel\(sib\)/);
 });
