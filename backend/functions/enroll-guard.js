@@ -18,7 +18,7 @@ export async function handler(req, ctx) {
     return json({ error: "Invalid JSON body" }, 400);
   }
 
-  const { schedule_id, student_name, student_email, student_phone } = body;
+  const { schedule_id, student_name, student_email, student_phone, parent_name } = body;
   let numClasses = parseInt(body.num_classes_enrolled, 10);
   if (!schedule_id) {
     return json({ error: "schedule_id is required" }, 400);
@@ -53,6 +53,19 @@ export async function handler(req, ctx) {
     return json({ error: "Class is full", spots_available: 0 }, 409);
   }
 
+  // Student ownership: a parent may only attach one of their own students.
+  let studentId = null;
+  if (body.student_id) {
+    const studentRes = await ctx.db.query(
+      `SELECT id FROM students WHERE id = $1 AND user_id = $2`,
+      [body.student_id, ctx.user.id]
+    );
+    if (studentRes.rows.length === 0) {
+      return json({ error: "Student not found" }, 400);
+    }
+    studentId = body.student_id;
+  }
+
   // 3. Server-side pricing with the universal early-bird discount:
   //    10% off when booking 15+ classes before the 2026-08-15 deadline.
   const perClass = schedule.price_cents;
@@ -65,11 +78,12 @@ export async function handler(req, ctx) {
   // 4. Pending enrollment owned by the current user
   const enrollRes = await ctx.db.query(
     `INSERT INTO enrollments (schedule_id, user_id, student_name, student_email, student_phone,
-                              status, num_classes_enrolled, price_per_class_cents, discount_pct, total_paid_cents)
-     VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9)
+                              status, num_classes_enrolled, price_per_class_cents, discount_pct, total_paid_cents,
+                              parent_name, student_id)
+     VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11)
      RETURNING id`,
     [schedule_id, ctx.user.id, student_name || "", student_email || "", student_phone || "",
-     numClasses, perClass, isEarlyBird ? ebPct : 0, total]
+     numClasses, perClass, isEarlyBird ? ebPct : 0, total, parent_name || "", studentId]
   );
   const enrollmentId = enrollRes.rows[0].id;
 
