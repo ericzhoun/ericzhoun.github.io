@@ -1,8 +1,9 @@
 // Account page — enrollments, credits, upcoming classes, make-up booking.
 // Ported from herfield app/account/AccountPageClient.js, compiled to vanilla JS.
-import { apiGet, apiGetByIds, callFunction, formatPrice, formatTime, getQueryParam } from "./api.js";
+import { apiGet, apiGetByIds, callFunction, formatPrice, formatTime, getQueryParam, compareDayOfWeek } from "./api.js";
 import { isLoggedIn, getUser, isAdmin, logout, getToken, refreshToken, requireAuth, claimEnrollments } from "./auth.js";
 import { calculateStudentAge } from "./student-age.js";
+import { groupEnrollmentsByOrder } from "./enrollment-grouping.js";
 
 // Require login — redirect to login.html if not authenticated.
 const user = requireAuth();
@@ -225,60 +226,63 @@ function renderEnrollmentsTab() {
   }
 
   const list = el("div", "enrollment-list");
-  state.enrollments.forEach((en) => {
-    list.appendChild(renderEnrollmentCard(en));
+  groupEnrollmentsByOrder(state.enrollments).forEach((rows) => {
+    list.appendChild(rows.length > 1 ? renderEnrollmentGroupCard(rows) : renderEnrollmentCard(rows[0]));
   });
   root.appendChild(list);
 }
 
-function renderEnrollmentCard(en) {
-  const creditBalance = getCreditBalance(en);
-  const upcoming = getUpcomingBookings(en.id);
-  const sched = state.schedules.find((s) => s.id === en.schedule_id);
-  const program = state.programs.find((p) => p.id === sched?.program_id);
-
-  const card = el("div", "enrollment-card enrollment-card-expanded");
-
-  // Header row
+function renderEnrollmentCardHeader(rows, program) {
+  const first = rows[0];
   const cardHeader = el("div", "enrollment-card-header");
   const info = el("div", "enrollment-info");
-  info.appendChild(el("h4", "", program ? program.name : en.student_name));
-  info.appendChild(el("p", "muted", en.student_email || ""));
-  if (en.num_classes_enrolled) {
+  info.appendChild(el("h4", "", program ? program.name : first.student_name));
+  info.appendChild(el("p", "muted", first.student_email || ""));
+  if (rows.length > 1) {
+    const days = rows
+      .map((en) => state.schedules.find((s) => s.id === en.schedule_id)?.day_of_week)
+      .filter(Boolean)
+      .sort(compareDayOfWeek);
+    info.appendChild(el("p", "muted enrollment-group-days", days.join(", ")));
+  }
+  const totalClasses = rows.reduce((sum, en) => sum + (en.num_classes_enrolled || 0), 0);
+  const totalPaid = rows.reduce((sum, en) => sum + (en.total_paid_cents || 0), 0);
+  if (totalClasses) {
     info.appendChild(el("p", "muted",
-      `${en.num_classes_enrolled} classes purchased` +
-      (en.total_paid_cents ? ` · ${formatPrice(en.total_paid_cents)} paid` : "")));
+      `${totalClasses} classes purchased` + (totalPaid ? ` · ${formatPrice(totalPaid)} paid` : "")));
   }
   cardHeader.appendChild(info);
 
   const statusCol = el("div", "enrollment-status");
-  statusCol.appendChild(el("span", `status-badge status-${en.status}`, en.status));
-  if (en.registration_complete) {
+  statusCol.appendChild(el("span", `status-badge status-${first.status}`, first.status));
+  if (first.registration_complete) {
     statusCol.appendChild(el("span", "status-badge status-registered", "Registered"));
   } else {
     const reg = el("a", "btn btn-sm", "Complete Registration");
-    reg.href = `registration.html?enrollment=${en.id}`;
+    reg.href = `registration.html?enrollment=${first.id}`;
     statusCol.appendChild(reg);
   }
   cardHeader.appendChild(statusCol);
-  card.appendChild(cardHeader);
+  return cardHeader;
+}
 
-  card.appendChild(renderEnrollmentStudentAssignment(en));
+function renderEnrollmentDayDetail(en) {
+  const creditBalance = getCreditBalance(en);
+  const upcoming = getUpcomingBookings(en.id);
+  const frag = document.createDocumentFragment();
 
-  // Credit balance
   if (en.status === "confirmed") {
     const credit = el("div", `credit-balance ${creditBalance < 0 ? "credit-negative" : "credit-positive"}`);
     credit.appendChild(el("span", "credit-label", "Credits Remaining"));
     credit.appendChild(el("span", "credit-value", String(creditBalance)));
-    card.appendChild(credit);
+    frag.appendChild(credit);
   } else if (en.status === "pending") {
-    card.appendChild(el("p", "muted",
+    frag.appendChild(el("p", "muted",
       "Payment pending — credits will be available once payment is confirmed."));
   } else {
-    card.appendChild(el("p", "muted", "This enrollment was cancelled."));
+    frag.appendChild(el("p", "muted", "This enrollment was cancelled."));
   }
 
-  // Upcoming classes
   if (en.status === "confirmed" && upcoming.length > 0) {
     const wrap = el("div", "upcoming-classes");
     wrap.appendChild(el("h5", "", "Upcoming Classes"));
@@ -317,13 +321,45 @@ function renderEnrollmentCard(en) {
       }
       wrap.appendChild(row);
     });
-    card.appendChild(wrap);
+    frag.appendChild(wrap);
   }
 
-  // Make-up booking section
   if (en.status === "confirmed") {
-    card.appendChild(renderMakeupSection(en));
+    frag.appendChild(renderMakeupSection(en));
   }
+
+  return frag;
+}
+
+function renderEnrollmentCard(en) {
+  const sched = state.schedules.find((s) => s.id === en.schedule_id);
+  const program = state.programs.find((p) => p.id === sched?.program_id);
+
+  const card = el("div", "enrollment-card enrollment-card-expanded");
+  card.appendChild(renderEnrollmentCardHeader([en], program));
+  card.appendChild(renderEnrollmentStudentAssignment(en));
+  card.appendChild(renderEnrollmentDayDetail(en));
+  return card;
+}
+
+function renderEnrollmentGroupCard(rows) {
+  const first = rows[0];
+  const sched = state.schedules.find((s) => s.id === first.schedule_id);
+  const program = state.programs.find((p) => p.id === sched?.program_id);
+
+  const card = el("div", "enrollment-card enrollment-card-expanded enrollment-group-card");
+  card.appendChild(renderEnrollmentCardHeader(rows, program));
+  card.appendChild(renderEnrollmentStudentAssignment(first));
+
+  rows.forEach((en) => {
+    const daySched = state.schedules.find((s) => s.id === en.schedule_id);
+    const dayBlock = el("div", "enrollment-day-block");
+    if (daySched?.day_of_week) {
+      dayBlock.appendChild(el("h5", "enrollment-day-label", daySched.day_of_week));
+    }
+    dayBlock.appendChild(renderEnrollmentDayDetail(en));
+    card.appendChild(dayBlock);
+  });
 
   return card;
 }

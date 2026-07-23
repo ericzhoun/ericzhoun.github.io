@@ -1848,6 +1848,23 @@ textarea {
   margin: 0;
 }
 
+.enrollment-group-days {
+  font-weight: 600;
+}
+
+.enrollment-day-block {
+  border-top: 1px solid var(--color-border);
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+
+.enrollment-day-label {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
 /* Credit balance display */
 .credit-balance {
   display: flex;
