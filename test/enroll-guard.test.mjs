@@ -235,3 +235,39 @@ test("enroll-guard creates one enrollment row per selected day, all sharing one 
     global.fetch = originalFetch;
   }
 });
+
+test("enroll-guard accepts schedule_ids on different days that run at different times", async () => {
+  const bundleRow = (id, day, start, end) => ({
+    id, program_id: "prog-1", semester_id: "sem-1", session_type: "standard",
+    start_time: start, end_time: end, age_group: "7-12", price_cents: 3000, max_seats: 10,
+    day_of_week: day, program_name: "Ballet", program_num_classes: 8,
+  });
+  const { ctx, queries } = makeCtx([
+    { rows: [bundleRow("sched-1", "Monday", "16:00", "17:00")] },
+    { rows: [bundleRow("sched-2", "Wednesday", "17:00", "18:00")] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ id: "enrollment-1" }] },
+    { rows: [{ id: "enrollment-2" }] },
+    { rows: [] },
+  ]);
+  const originalFetch = global.fetch;
+  global.fetch = stubFetch([
+    { id: "product-1" },
+    { orderId: "order-1", url: "https://stripe.test/checkout" },
+  ]);
+
+  try {
+    const response = await handler(request({
+      schedule_ids: ["sched-1", "sched-2"],
+      student_name: "Ada",
+      parent_name: "Grace Hopper",
+    }), ctx);
+
+    assert.equal(response.status, 200);
+    const inserts = queries.filter((q) => /INSERT INTO enrollments/.test(q.sql));
+    assert.equal(inserts.length, 2);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

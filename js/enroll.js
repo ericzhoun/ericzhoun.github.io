@@ -1,6 +1,6 @@
 // Enroll page — class details, pricing breakdown, Stripe checkout.
 // Ported from herfield app/art-class/enroll/[scheduleId]/EnrollPageClient.js.
-import { apiGet, callFunction, formatPrice, formatTime, getQueryParam, campBundleQuery, compareDayOfWeek } from "./api.js";
+import { apiGet, callFunction, formatPrice, formatTime, getQueryParam, campBundleQuery, looseBundleQuery, compareDayOfWeek } from "./api.js";
 import { isLoggedIn, getUser, getToken } from "./auth.js";
 import { EARLY_BIRD_MIN_CLASSES, EARLY_BIRD_PCT, computeEarlyBird } from "./pricing.js";
 
@@ -42,10 +42,22 @@ function getNumClasses() {
   return state.numClasses;
 }
 
+// Labels a sibling's day, appending its time only when it differs from the
+// clicked schedule's time - siblings can run at a different time on a
+// different day (e.g. Monday 4-5pm, Wednesday 5-6pm), so the differing
+// slot needs to be called out rather than silently assumed identical.
+function formatDayLabel(sibling) {
+  const base = state.schedule;
+  const differentTime = base && (sibling.start_time !== base.start_time || sibling.end_time !== base.end_time);
+  return differentTime
+    ? `${sibling.day_of_week} ${formatTime(sibling.start_time)}–${formatTime(sibling.end_time)}`
+    : sibling.day_of_week;
+}
+
 function selectedDayNames() {
   return state.siblingSchedules
     .filter((s) => state.selectedScheduleIds.has(s.id))
-    .map((s) => s.day_of_week);
+    .map((s) => formatDayLabel(s));
 }
 
 function render() {
@@ -121,10 +133,15 @@ function render() {
       : schedule.day_of_week));
     details.appendChild(rowDay);
 
-    const rowTime = el("div", "detail-row");
-    rowTime.appendChild(el("span", "detail-label", "Time"));
-    rowTime.appendChild(el("span", "", `${formatTime(schedule.start_time)} – ${formatTime(schedule.end_time)}`));
-    details.appendChild(rowTime);
+    // In multi-day mode, per-day times (when they differ) are already shown
+    // inline in the Day row above - a single fixed Time row here would be
+    // misleading once the selected days don't share one time slot.
+    if (state.siblingSchedules.length <= 1) {
+      const rowTime = el("div", "detail-row");
+      rowTime.appendChild(el("span", "detail-label", "Time"));
+      rowTime.appendChild(el("span", "", `${formatTime(schedule.start_time)} – ${formatTime(schedule.end_time)}`));
+      details.appendChild(rowTime);
+    }
 
     const rowAge = el("div", "detail-row");
     rowAge.appendChild(el("span", "detail-label", "Age Group"));
@@ -175,7 +192,7 @@ function render() {
         render();
       };
       lbl.appendChild(cb);
-      lbl.appendChild(document.createTextNode(` ${sib.day_of_week}`));
+      lbl.appendChild(document.createTextNode(` ${formatDayLabel(sib)}`));
       dayCheckboxes.appendChild(lbl);
     });
     rowClasses.appendChild(dayCheckboxes);
@@ -426,14 +443,19 @@ async function init() {
       state.numClasses = prog[0].num_classes || 8;
     }
 
-    const siblings = await apiGet(campBundleQuery(state.schedule));
     if (state.program?.program_type === "camp") {
       state.isCamp = true;
+      const siblings = await apiGet(campBundleQuery(state.schedule));
       state.campDays = siblings.map((s) => s.day_of_week).sort(compareDayOfWeek);
       state.numClasses = siblings.length || 1;
-    } else if (siblings.length > 1) {
-      state.siblingSchedules = [...siblings].sort((a, b) => compareDayOfWeek(a.day_of_week, b.day_of_week));
-      state.selectedScheduleIds = new Set([scheduleId]);
+    } else {
+      // Loose match: a multi-day class doesn't have to run at the same time
+      // every day (e.g. Monday 4-5pm, Wednesday 5-6pm).
+      const siblings = await apiGet(looseBundleQuery(state.schedule));
+      if (siblings.length > 1) {
+        state.siblingSchedules = [...siblings].sort((a, b) => compareDayOfWeek(a.day_of_week, b.day_of_week));
+        state.selectedScheduleIds = new Set([scheduleId]);
+      }
     }
 
     // Seat availability (confirmed + fresh pending holds). Anonymous REST

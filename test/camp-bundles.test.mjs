@@ -6,6 +6,8 @@ import {
   scheduleBundleKey,
   groupCampBundles,
   campBundleQuery,
+  looseScheduleBundleKey,
+  looseBundleQuery,
 } from "../js/api.js";
 
 test("WEEK_DAYS lists Monday through Sunday in order", () => {
@@ -86,5 +88,31 @@ test("campBundleQuery builds a REST filter matching every bundle field", () => {
     "class_schedules?program_id=eq.p1&semester_id=eq.s1&session_type=eq.standard" +
       "&start_time=eq.09:00&end_time=eq.12:00&age_group=eq.6-10" +
       "&price_cents=eq.7000&max_seats=eq.12&active=eq.true&order=day_of_week.asc"
+  );
+});
+
+test("looseScheduleBundleKey matches rows with different start/end times but differs when program/price/etc changes", () => {
+  const base = {
+    program_id: "p1", semester_id: "s1", session_type: "standard",
+    start_time: "16:00", end_time: "17:00", age_group: "6-10",
+    price_cents: 7000, max_seats: 12,
+  };
+  const differentTime = { ...base, start_time: "17:00", end_time: "18:00" };
+  const differentPrice = { ...base, price_cents: 8000 };
+
+  assert.equal(looseScheduleBundleKey(base), looseScheduleBundleKey(differentTime));
+  assert.notEqual(looseScheduleBundleKey(base), looseScheduleBundleKey(differentPrice));
+});
+
+test("looseBundleQuery builds a REST filter matching every bundle field except time", () => {
+  const schedule = {
+    program_id: "p1", semester_id: "s1", session_type: "standard",
+    start_time: "09:00", end_time: "12:00", age_group: "6-10",
+    price_cents: 7000, max_seats: 12,
+  };
+  assert.equal(
+    looseBundleQuery(schedule),
+    "class_schedules?program_id=eq.p1&semester_id=eq.s1&session_type=eq.standard" +
+      "&age_group=eq.6-10&price_cents=eq.7000&max_seats=eq.12&active=eq.true&order=day_of_week.asc"
   );
 });

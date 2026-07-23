@@ -141,6 +141,32 @@ export function groupCampBundles(schedules, programs) {
   return { bundles, singles };
 }
 
+/** Grouping key for schedules that belong to the same class but may run at a
+ *  different time on different days (e.g. Monday 4-5pm, Wednesday 5-6pm) -
+ *  same as scheduleBundleKey but without start_time/end_time. Used by
+ *  enroll.js to offer day-of-week selection for a multi-day class without
+ *  requiring every day to share one time slot. */
+export function looseScheduleBundleKey(schedule) {
+  return [
+    schedule.program_id, schedule.semester_id, schedule.session_type,
+    schedule.age_group, schedule.price_cents, schedule.max_seats,
+  ].join("|");
+}
+
+/** REST query for every class_schedules row sharing `schedule`'s loose
+ *  bundle key (program/semester/session/age group/price/capacity, but NOT
+ *  time) - siblings may run at different times on different days. Used by
+ *  enroll.js to discover which days a multi-day class is offered on. */
+export function looseBundleQuery(schedule) {
+  return `class_schedules?program_id=eq.${schedule.program_id}` +
+    `&semester_id=eq.${schedule.semester_id}` +
+    `&session_type=eq.${schedule.session_type}` +
+    `&age_group=eq.${encodeURIComponent(schedule.age_group)}` +
+    `&price_cents=eq.${schedule.price_cents}` +
+    `&max_seats=eq.${schedule.max_seats}` +
+    `&active=eq.true&order=day_of_week.asc`;
+}
+
 /** REST query for every class_schedules row in the same camp bundle as
  *  `schedule` (same program/semester/session/time/age group/price/capacity).
  *  Used by enroll.js to fetch a camp's full day list. */

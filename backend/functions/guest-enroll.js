@@ -220,7 +220,9 @@ async function handleMultiDay(body, ctx) {
     }
     schedules.push(res.rows[0]);
   }
-  const bundleKey = (s) => [s.program_id, s.semester_id, s.session_type, s.start_time, s.end_time,
+  // Note: intentionally NOT start_time/end_time - a multi-day class can run
+  // at a different time on different days (e.g. Monday 4-5pm, Wed 5-6pm).
+  const bundleKey = (s) => [s.program_id, s.semester_id, s.session_type,
     s.age_group, s.price_cents, s.max_seats].join("|");
   const firstKey = bundleKey(schedules[0]);
   if (!schedules.every((s) => bundleKey(s) === firstKey)) {

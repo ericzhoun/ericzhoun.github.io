@@ -44,11 +44,19 @@ test("enroll.js offers a student dropdown with an Other / New student fallback",
   assert.match(script, /state\.students\.length > 0/);
 });
 
-test("enroll.js detects non-camp sibling schedules and defaults to only the clicked day selected", async () => {
+test("enroll.js detects non-camp sibling schedules via a loose (time-independent) query and defaults to only the clicked day selected", async () => {
   const script = await readEnroll();
-  assert.match(script, /\} else if \(siblings\.length > 1\) \{/);
+  assert.match(script, /looseBundleQuery\(state\.schedule\)/);
+  assert.match(script, /if \(siblings\.length > 1\) \{/);
   assert.match(script, /state\.selectedScheduleIds = new Set\(\[scheduleId\]\)/);
   assert.match(script, /function getNumClasses\(\)/);
+});
+
+test("enroll.js marks a sibling day's time only when it differs from the clicked schedule's time", async () => {
+  const script = await readEnroll();
+  assert.match(script, /function formatDayLabel\(sibling\)/);
+  assert.match(script, /sibling\.start_time !== base\.start_time \|\| sibling\.end_time !== base\.end_time/);
+  assert.match(script, /formatDayLabel\(sib\)/);
 });
 
 test("enroll.js prevents unchecking the only remaining selected day", async () => {
