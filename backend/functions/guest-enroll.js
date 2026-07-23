@@ -21,6 +21,7 @@ export async function handler(req, ctx) {
   const student_name = String(body.student_name || "").trim();
   const student_email = String(body.student_email || "").trim().toLowerCase();
   const student_phone = String(body.student_phone || "").trim();
+  const parent_name = String(body.parent_name || "").trim();
   let numClasses = parseInt(body.num_classes_enrolled, 10);
 
   if (!schedule_id) return json({ error: "schedule_id is required" }, 400);
@@ -110,11 +111,12 @@ export async function handler(req, ctx) {
   // 6. Pending enrollment owned by the provisional account
   const enrollRes = await ctx.db.query(
     `INSERT INTO enrollments (schedule_id, user_id, student_name, student_email, student_phone,
-                              status, num_classes_enrolled, price_per_class_cents, discount_pct, total_paid_cents)
-     VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9)
+                              status, num_classes_enrolled, price_per_class_cents, discount_pct, total_paid_cents,
+                              parent_name)
+     VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10)
      RETURNING id`,
     [schedule_id, guestUser.id, student_name, student_email, student_phone,
-     numClasses, perClass, isEarlyBird ? ebPct : 0, total]
+     numClasses, perClass, isEarlyBird ? ebPct : 0, total, parent_name]
   );
   const enrollmentId = enrollRes.rows[0].id;
 
