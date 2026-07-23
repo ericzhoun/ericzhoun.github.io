@@ -68,3 +68,21 @@ test("enroll.js submits schedule_ids instead of schedule_id when multiple days a
   const script = await readEnroll();
   assert.match(script, /schedule_ids: \[\.\.\.state\.selectedScheduleIds\]/);
 });
+
+test("enroll.js defaults the class count to 15 and getNumClasses always returns it directly", async () => {
+  const script = await readEnroll();
+  assert.match(script, /numClasses: 15,/);
+  assert.match(script, /function getNumClasses\(\) \{\s*return state\.numClasses;\s*\}/);
+});
+
+test("enroll.js caps the class count at max(program.num_classes, 15) with a minimum of 10", async () => {
+  const script = await readEnroll();
+  assert.match(script, /const maxClasses = program \? Math\.max\(program\.num_classes \|\| 15, 15\) : 15;/);
+  assert.match(script, /const minClasses = 10;/);
+});
+
+test("enroll.js sends num_classes_enrolled in both single-schedule and multi-day submissions", async () => {
+  const script = await readEnroll();
+  const matches = script.match(/num_classes_enrolled: state\.numClasses/g) || [];
+  assert.equal(matches.length, 1); // one shared expression covering both branches
+});

@@ -21,7 +21,7 @@ const state = {
   studentName: "",
   studentEmail: "",
   studentPhone: "",
-  numClasses: 8,
+  numClasses: 15,
   isCamp: false,
   campDays: [],
   siblingSchedules: [],
@@ -38,7 +38,6 @@ function el(tag, className, html) {
 }
 
 function getNumClasses() {
-  if (state.siblingSchedules.length > 1) return Math.max(1, state.selectedScheduleIds.size);
   return state.numClasses;
 }
 
@@ -111,7 +110,8 @@ function render() {
   const schedule = state.schedule;
   const program = state.program;
   const pricePerClass = schedule ? schedule.price_cents : 0;
-  const maxClasses = program ? program.num_classes || 8 : 8;
+  const maxClasses = program ? Math.max(program.num_classes || 15, 15) : 15;
+  const minClasses = 10;
   const isEarlyBird = computeEarlyBird(getNumClasses());
 
   const subtotal = pricePerClass * getNumClasses();
@@ -378,9 +378,10 @@ async function handleEnroll(e) {
   render();
   try {
     const multiDay = state.siblingSchedules.length > 1;
-    const scheduleParams = multiDay
-      ? { schedule_ids: [...state.selectedScheduleIds] }
-      : { schedule_id: scheduleId, num_classes_enrolled: state.numClasses };
+    const scheduleParams = {
+      ...(multiDay ? { schedule_ids: [...state.selectedScheduleIds] } : { schedule_id: scheduleId }),
+      num_classes_enrolled: state.numClasses,
+    };
 
     let result;
     if (state.user) {
@@ -440,7 +441,7 @@ async function init() {
     const prog = await apiGet(`programs?id=eq.${sched[0].program_id}`);
     if (prog.length > 0) {
       state.program = prog[0];
-      state.numClasses = prog[0].num_classes || 8;
+      state.numClasses = 15;
     }
 
     if (state.program?.program_type === "camp") {
