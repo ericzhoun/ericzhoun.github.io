@@ -138,7 +138,7 @@ function render() {
     // misleading once the selected days don't share one time slot.
     if (state.siblingSchedules.length <= 1) {
       const rowTime = el("div", "detail-row");
-      rowTime.appendChild(el("span", "detail-label", "Time"));
+      rowTime.appendChild(el("span", "detail-label", "Class Time"));
       rowTime.appendChild(el("span", "", `${formatTime(schedule.start_time)} – ${formatTime(schedule.end_time)}`));
       details.appendChild(rowTime);
     }
@@ -169,39 +169,54 @@ function render() {
   rowPrice.appendChild(el("span", "", formatPrice(pricePerClass)));
   pricing.appendChild(rowPrice);
 
-  // Number-of-classes stepper (camps: fixed to the bundle size, not adjustable)
-  const rowClasses = el("div", "pricing-row");
-  const lbl = el("label", "", "Number of classes");
-  lbl.setAttribute("for", "num-classes");
-  rowClasses.appendChild(lbl);
-
   if (state.isCamp) {
+    // Camp: fixed to the bundle size, not adjustable.
+    const rowClasses = el("div", "pricing-row");
+    const lbl = el("label", "", "Number of classes");
+    lbl.setAttribute("for", "num-classes");
+    rowClasses.appendChild(lbl);
     rowClasses.appendChild(el("span", "num-classes-value",
       `${state.numClasses} (${state.campDays.join(", ")} - included, not adjustable)`));
-  } else if (state.siblingSchedules.length > 1) {
-    const dayCheckboxes = el("div", "day-checkboxes");
-    state.siblingSchedules.forEach((sib) => {
-      const lbl = el("label", "checkbox-label");
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = state.selectedScheduleIds.has(sib.id);
-      cb.disabled = cb.checked && state.selectedScheduleIds.size === 1;
-      cb.onchange = (e) => {
-        if (e.target.checked) state.selectedScheduleIds.add(sib.id);
-        else state.selectedScheduleIds.delete(sib.id);
-        render();
-      };
-      lbl.appendChild(cb);
-      lbl.appendChild(document.createTextNode(` ${formatDayLabel(sib)}`));
-      dayCheckboxes.appendChild(lbl);
-    });
-    rowClasses.appendChild(dayCheckboxes);
+    pricing.appendChild(rowClasses);
   } else {
+    // Class Time: which weekly day/time slot(s) this enrollment attends.
+    // Only rendered here when 2+ day-parts matched - the single-match case
+    // is already shown by the "Class Time" detail row above.
+    if (state.siblingSchedules.length > 1) {
+      const rowClassTime = el("div", "pricing-row");
+      rowClassTime.appendChild(el("label", "", "Class Time"));
+      const dayCheckboxes = el("div", "day-checkboxes");
+      state.siblingSchedules.forEach((sib) => {
+        const lbl = el("label", "checkbox-label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = state.selectedScheduleIds.has(sib.id);
+        cb.disabled = cb.checked && state.selectedScheduleIds.size === 1;
+        cb.onchange = (e) => {
+          if (e.target.checked) state.selectedScheduleIds.add(sib.id);
+          else state.selectedScheduleIds.delete(sib.id);
+          render();
+        };
+        lbl.appendChild(cb);
+        lbl.appendChild(document.createTextNode(` ${formatDayLabel(sib)}`));
+        dayCheckboxes.appendChild(lbl);
+      });
+      rowClassTime.appendChild(dayCheckboxes);
+      pricing.appendChild(rowClassTime);
+    }
+
+    // Number of Classes: total sessions purchased, independent of which
+    // Class Time day-part(s) are selected above.
+    const rowClasses = el("div", "pricing-row");
+    const lbl = el("label", "", "Number of Classes");
+    lbl.setAttribute("for", "num-classes");
+    rowClasses.appendChild(lbl);
+
     const ctrl = el("div", "num-classes-control");
     const minusBtn = el("button", "", "−");
     minusBtn.type = "button";
-    minusBtn.disabled = state.numClasses <= 1 || isFull;
-    minusBtn.onclick = () => { state.numClasses = Math.max(1, state.numClasses - 1); render(); };
+    minusBtn.disabled = state.numClasses <= minClasses || isFull;
+    minusBtn.onclick = () => { state.numClasses = Math.max(minClasses, state.numClasses - 1); render(); };
     ctrl.appendChild(minusBtn);
 
     ctrl.appendChild(el("span", "num-classes-value", String(state.numClasses)));
@@ -214,8 +229,8 @@ function render() {
 
     ctrl.appendChild(el("span", "muted num-classes-max", `of ${maxClasses}`));
     rowClasses.appendChild(ctrl);
+    pricing.appendChild(rowClasses);
   }
-  pricing.appendChild(rowClasses);
 
   const rowSub = el("div", "pricing-row pricing-subtotal");
   rowSub.appendChild(el("span", "", "Subtotal"));

@@ -86,3 +86,22 @@ test("enroll.js sends num_classes_enrolled in both single-schedule and multi-day
   const matches = script.match(/num_classes_enrolled: state\.numClasses/g) || [];
   assert.equal(matches.length, 1); // one shared expression covering both branches
 });
+
+test("enroll.js relabels the single-match Time detail row to Class Time", async () => {
+  const script = await readEnroll();
+  assert.match(script, /rowTime\.appendChild\(el\("span", "detail-label", "Class Time"\)\)/);
+  assert.doesNotMatch(script, /el\("span", "detail-label", "Time"\)/);
+});
+
+test("enroll.js shows Class Time day checkboxes in their own pricing row, separate from Number of Classes", async () => {
+  const script = await readEnroll();
+  assert.match(script, /el\("label", "", "Class Time"\)/);
+  assert.match(script, /el\("label", "", "Number of Classes"\)/);
+});
+
+test("enroll.js shows the Number of Classes stepper for both single-schedule and multi-day non-camp modes", async () => {
+  const script = await readEnroll();
+  assert.match(script, /state\.numClasses <= minClasses \|\| isFull/);
+  assert.match(script, /state\.numClasses >= maxClasses \|\| isFull/);
+  assert.doesNotMatch(script, /state\.numClasses <= 1 \|\| isFull/);
+});
