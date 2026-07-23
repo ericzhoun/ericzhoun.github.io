@@ -242,14 +242,25 @@ async function handleMultiDay(body, ctx) {
     }
   }
 
+  schedules.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const perClass = schedules[0].price_cents;
-  const numClasses = schedules.length;
+  const maxClasses = Math.max(schedules[0].program_num_classes || 15, 15);
+  const minClasses = Math.max(10, schedules.length);
+  let numClasses = parseInt(body.num_classes_enrolled, 10);
+  if (!Number.isFinite(numClasses) || numClasses < minClasses) numClasses = Math.max(15, minClasses);
+  numClasses = Math.min(numClasses, maxClasses);
+
+  const n = schedules.length;
+  const base = Math.floor(numClasses / n);
+  const remainder = numClasses % n;
+  const classesForRow = (i) => base + (i < remainder ? 1 : 0);
+
   const isEarlyBird = numClasses >= EARLY_BIRD_MIN_CLASSES && new Date() <= new Date(EARLY_BIRD_DEADLINE);
   const ebPct = EARLY_BIRD_PCT;
   const subtotal = perClass * numClasses;
   const discountAmount = isEarlyBird ? Math.round((subtotal * ebPct) / 100) : 0;
   const total = subtotal - discountAmount;
-  const perDayDiscounted = perClass - Math.round((perClass * (isEarlyBird ? ebPct : 0)) / 100);
+  const perClassDiscounted = perClass - Math.round((perClass * (isEarlyBird ? ebPct : 0)) / 100);
 
   const apiBase = ctx.env.BUTTERBASE_API_URL || "https://api.butterbase.ai";
   const appId = ctx.env.BUTTERBASE_APP_ID;
@@ -288,18 +299,21 @@ async function handleMultiDay(body, ctx) {
   const guestToken = loginData.access_token;
 
   const enrollmentIds = [];
-  for (let i = 0; i < schedules.length; i += 1) {
+  let runningTotal = 0;
+  for (let i = 0; i < n; i += 1) {
     const schedule = schedules[i];
-    const isLast = i === schedules.length - 1;
-    const rowTotal = isLast ? total - perDayDiscounted * i : perDayDiscounted;
+    const rowClasses = classesForRow(i);
+    const isLast = i === n - 1;
+    const rowTotal = isLast ? total - runningTotal : perClassDiscounted * rowClasses;
+    runningTotal += rowTotal;
     const enrollRes = await ctx.db.query(
       `INSERT INTO enrollments (schedule_id, user_id, student_name, student_email, student_phone,
                                 status, num_classes_enrolled, price_per_class_cents, discount_pct, total_paid_cents,
                                 parent_name)
-       VALUES ($1, $2, $3, $4, $5, 'pending', 1, $6, $7, $8, $9)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10)
        RETURNING id`,
       [schedule.id, guestUser.id, student_name, student_email, student_phone,
-       perClass, isEarlyBird ? ebPct : 0, rowTotal, parent_name]
+       rowClasses, perClass, isEarlyBird ? ebPct : 0, rowTotal, parent_name]
     );
     enrollmentIds.push(enrollRes.rows[0].id);
   }
