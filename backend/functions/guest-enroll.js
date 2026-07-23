@@ -17,6 +17,10 @@ export async function handler(req, ctx) {
     return json({ error: "Invalid JSON body" }, 400);
   }
 
+  if (Array.isArray(body.schedule_ids)) {
+    return handleMultiDay(body, ctx);
+  }
+
   const schedule_id = body.schedule_id;
   const student_name = String(body.student_name || "").trim();
   const student_email = String(body.student_email || "").trim().toLowerCase();
@@ -179,6 +183,179 @@ export async function handler(req, ctx) {
   // Note: order_id is intentionally not returned to the client.
   return json({
     enrollment_id: enrollmentId,
+    checkout_url: purchase.url,
+    total_cents: total,
+  }, 200);
+}
+
+async function handleMultiDay(body, ctx) {
+  const scheduleIds = [...new Set(body.schedule_ids)];
+  if (scheduleIds.length === 0) {
+    return json({ error: "schedule_ids must be a non-empty array" }, 400);
+  }
+  if (scheduleIds.length !== body.schedule_ids.length) {
+    return json({ error: "schedule_ids must not contain duplicates" }, 400);
+  }
+
+  const student_name = String(body.student_name || "").trim();
+  const student_email = String(body.student_email || "").trim().toLowerCase();
+  const student_phone = String(body.student_phone || "").trim();
+  const parent_name = String(body.parent_name || "").trim();
+  if (!student_name) return json({ error: "Student name is required" }, 400);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(student_email)) {
+    return json({ error: "A valid email is required" }, 400);
+  }
+
+  const schedules = [];
+  for (const scheduleId of scheduleIds) {
+    const res = await ctx.db.query(
+      `SELECT cs.*, p.name AS program_name, p.num_classes AS program_num_classes
+       FROM class_schedules cs
+       JOIN programs p ON cs.program_id = p.id
+       WHERE cs.id = $1 AND cs.active = true`,
+      [scheduleId]
+    );
+    if (res.rows.length === 0) {
+      return json({ error: `Class schedule not found: ${scheduleId}` }, 404);
+    }
+    schedules.push(res.rows[0]);
+  }
+  const bundleKey = (s) => [s.program_id, s.semester_id, s.session_type, s.start_time, s.end_time,
+    s.age_group, s.price_cents, s.max_seats].join("|");
+  const firstKey = bundleKey(schedules[0]);
+  if (!schedules.every((s) => bundleKey(s) === firstKey)) {
+    return json({ error: "All selected days must belong to the same class bundle" }, 400);
+  }
+
+  for (const schedule of schedules) {
+    const countRes = await ctx.db.query(
+      `SELECT COUNT(*) AS held FROM enrollments
+       WHERE schedule_id = $1
+         AND (status = 'confirmed'
+              OR (status = 'pending' AND created_at > now() - interval '60 minutes'))`,
+      [schedule.id]
+    );
+    if (parseInt(countRes.rows[0].held, 10) >= schedule.max_seats) {
+      return json({ error: `Class is full: ${schedule.day_of_week}`, spots_available: 0 }, 409);
+    }
+  }
+
+  const perClass = schedules[0].price_cents;
+  const numClasses = schedules.length;
+  const isEarlyBird = numClasses >= EARLY_BIRD_MIN_CLASSES && new Date() <= new Date(EARLY_BIRD_DEADLINE);
+  const ebPct = EARLY_BIRD_PCT;
+  const subtotal = perClass * numClasses;
+  const discountAmount = isEarlyBird ? Math.round((subtotal * ebPct) / 100) : 0;
+  const total = subtotal - discountAmount;
+  const perDayDiscounted = perClass - Math.round((perClass * (isEarlyBird ? ebPct : 0)) / 100);
+
+  const apiBase = ctx.env.BUTTERBASE_API_URL || "https://api.butterbase.ai";
+  const appId = ctx.env.BUTTERBASE_APP_ID;
+  const siteUrl = ctx.env.SITE_URL || "https://olivistart.com";
+
+  const password = randomPassword();
+  const signupRes = await fetch(`${apiBase}/auth/${appId}/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: student_email, password, display_name: student_name }),
+  });
+  const signupData = await signupRes.json();
+  if (!signupRes.ok) {
+    const msg = String(signupData.error || signupData.message || "");
+    if (/already exists|already registered/i.test(msg)) {
+      return json({
+        error: "An account with this email already exists. Please log in to enroll.",
+        code: "EMAIL_EXISTS",
+      }, 409);
+    }
+    console.error("Failed to create guest account:", msg);
+    return json({ error: "Could not start checkout. Please try again." }, 502);
+  }
+  const guestUser = signupData.user;
+
+  const loginRes = await fetch(`${apiBase}/auth/${appId}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: student_email, password }),
+  });
+  const loginData = await loginRes.json();
+  if (!loginRes.ok) {
+    console.error("Failed to sign in guest account:", loginData.error || loginData.message);
+    return json({ error: "Could not start checkout. Please try again." }, 502);
+  }
+  const guestToken = loginData.access_token;
+
+  const enrollmentIds = [];
+  for (let i = 0; i < schedules.length; i += 1) {
+    const schedule = schedules[i];
+    const isLast = i === schedules.length - 1;
+    const rowTotal = isLast ? total - perDayDiscounted * i : perDayDiscounted;
+    const enrollRes = await ctx.db.query(
+      `INSERT INTO enrollments (schedule_id, user_id, student_name, student_email, student_phone,
+                                status, num_classes_enrolled, price_per_class_cents, discount_pct, total_paid_cents,
+                                parent_name)
+       VALUES ($1, $2, $3, $4, $5, 'pending', 1, $6, $7, $8, $9)
+       RETURNING id`,
+      [schedule.id, guestUser.id, student_name, student_email, student_phone,
+       perClass, isEarlyBird ? ebPct : 0, rowTotal, parent_name]
+    );
+    enrollmentIds.push(enrollRes.rows[0].id);
+  }
+
+  const dayList = schedules.map((s) => s.day_of_week).join(", ");
+  const productName = `${schedules[0].program_name} - ${numClasses} day${numClasses > 1 ? "s" : ""} (${dayList})` +
+    (isEarlyBird ? ` (${ebPct}% early-bird)` : "");
+  const productRes = await fetch(`${apiBase}/v1/${appId}/billing/products`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ctx.env.SERVICE_KEY}` },
+    body: JSON.stringify({
+      name: productName,
+      priceCents: total,
+      description: `${schedules[0].program_name} art class - ${numClasses} day${numClasses > 1 ? "s" : ""} x $${(perClass / 100).toFixed(2)}` +
+        (isEarlyBird ? `, ${ebPct}% early-bird discount` : ""),
+      metadata: {
+        enrollment_ids: enrollmentIds.join(","),
+        schedule_ids: scheduleIds.join(","),
+        guest: "true",
+        num_classes: String(numClasses),
+        price_per_class_cents: String(perClass),
+        discount_pct: String(isEarlyBird ? ebPct : 0),
+        total_cents: String(total),
+      },
+    }),
+  });
+  if (!productRes.ok) {
+    const errText = await productRes.text();
+    console.error("Failed to create product:", errText);
+    await ctx.db.query(`DELETE FROM enrollments WHERE id = ANY($1)`, [enrollmentIds]);
+    return json({ error: "Failed to create payment product" }, 502);
+  }
+  const product = await productRes.json();
+
+  const purchaseRes = await fetch(`${apiBase}/v1/${appId}/billing/purchase`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${guestToken}` },
+    body: JSON.stringify({
+      productId: product.id,
+      successUrl: `${siteUrl}/checkout-success.html?enrollment=${enrollmentIds[0]}`,
+      cancelUrl: `${siteUrl}/enroll.html?schedule=${scheduleIds[0]}&payment=cancelled`,
+    }),
+  });
+  if (!purchaseRes.ok) {
+    const errText = await purchaseRes.text();
+    console.error("Failed to create checkout session:", errText);
+    await ctx.db.query(`DELETE FROM enrollments WHERE id = ANY($1)`, [enrollmentIds]);
+    return json({ error: "Failed to create checkout session" }, 502);
+  }
+  const purchase = await purchaseRes.json();
+
+  await ctx.db.query(
+    `UPDATE enrollments SET stripe_order_id = $1 WHERE id = ANY($2)`,
+    [purchase.orderId, enrollmentIds]
+  );
+
+  return json({
+    enrollment_id: enrollmentIds[0],
     checkout_url: purchase.url,
     total_cents: total,
   }, 200);
