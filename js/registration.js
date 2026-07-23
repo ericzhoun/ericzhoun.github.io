@@ -1,6 +1,6 @@
 // Registration form — post-payment student info + agreement.
 // Ported from herfield app/account/registration/[enrollmentId]/RegistrationFormClient.js.
-import { apiGet, callFunction, formatPrice, formatTime, getQueryParam } from "./api.js";
+import { apiGet, apiGetByIds, callFunction, formatPrice, formatTime, getQueryParam, compareDayOfWeek } from "./api.js";
 import { isLoggedIn, getUser, getToken, requireAuth } from "./auth.js";
 import { calculateAge } from "./student-age.js";
 
@@ -49,7 +49,8 @@ By signing below, I confirm that I have read, understood, and agree to all terms
 
 const state = {
   enrollment: null,
-  schedule: null,
+  group: [],
+  schedules: [],
   program: null,
   loading: true,
   error: "",
@@ -133,17 +134,17 @@ function render() {
     const sum = el("div", "registration-summary");
     sum.appendChild(el("h4", "", "Class Summary"));
     if (state.program) sum.appendChild(el("p", "", `<strong>${state.program.name}</strong>`));
-    if (state.schedule) {
+    if (state.schedules.length > 0) {
+      const days = state.schedules.map((s) => s.day_of_week).sort(compareDayOfWeek).join(", ");
+      const first = state.schedules[0];
       sum.appendChild(el("p", "muted",
-        `${state.schedule.day_of_week} ${formatTime(state.schedule.start_time)}–${formatTime(state.schedule.end_time)} · ${state.schedule.age_group}`));
+        `${days} ${formatTime(first.start_time)}–${formatTime(first.end_time)} · ${first.age_group}`));
     }
     const pricing = el("div", "registration-summary-pricing");
-    if (state.enrollment.num_classes_enrolled) {
-      pricing.appendChild(el("span", "", `${state.enrollment.num_classes_enrolled} classes`));
-    }
-    if (state.enrollment.total_paid_cents) {
-      pricing.appendChild(el("span", "price-highlight", `${formatPrice(state.enrollment.total_paid_cents)} paid`));
-    }
+    const totalClasses = state.group.reduce((sum, row) => sum + (row.num_classes_enrolled || 0), 0);
+    const totalPaid = state.group.reduce((sum, row) => sum + (row.total_paid_cents || 0), 0);
+    if (totalClasses) pricing.appendChild(el("span", "", `${totalClasses} classes`));
+    if (totalPaid) pricing.appendChild(el("span", "price-highlight", `${formatPrice(totalPaid)} paid`));
     sum.appendChild(pricing);
     root.appendChild(sum);
   }
@@ -295,10 +296,14 @@ async function init() {
       return;
     }
 
-    const sched = await apiGet(`class_schedules?id=eq.${en.schedule_id}`);
-    if (sched.length > 0) {
-      state.schedule = sched[0];
-      const prog = await apiGet(`programs?id=eq.${sched[0].program_id}`);
+    state.group = en.stripe_order_id
+      ? await apiGet(`enrollments?stripe_order_id=eq.${en.stripe_order_id}&order=created_at.asc`, token)
+      : [en];
+
+    const scheduleIds = [...new Set(state.group.map((row) => row.schedule_id).filter(Boolean))];
+    state.schedules = await apiGetByIds("class_schedules", scheduleIds);
+    if (state.schedules.length > 0) {
+      const prog = await apiGet(`programs?id=eq.${state.schedules[0].program_id}`);
       if (prog.length > 0) state.program = prog[0];
     }
   } catch (err) {
