@@ -70,6 +70,68 @@ test("guest-enroll persists parent_name onto the created enrollment", async () =
   }
 });
 
+test("guest-enroll floors an out-of-range low num_classes_enrolled to the 15 default", async () => {
+  const { ctx } = makeCtx([
+    { rows: [{ id: "sched-1", program_id: "prog-1", program_name: "Ballet", program_num_classes: 8, price_cents: 3000, max_seats: 10 }] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ id: "enrollment-1" }] },
+    { rows: [] },
+  ]);
+  const originalFetch = global.fetch;
+  global.fetch = stubFetch([
+    { user: { id: "guest-user-1" } },
+    { access_token: "guest-token" },
+    { id: "product-1" },
+    { orderId: "order-1", url: "https://stripe.test/checkout" },
+  ]);
+
+  try {
+    const response = await handler(request({
+      schedule_id: "sched-1",
+      student_name: "Ada",
+      student_email: "ada@example.com",
+      num_classes_enrolled: 4,
+    }), ctx);
+
+    assert.equal(response.status, 200);
+    // Same early-bird interaction as the enroll-guard test above: 15 classes
+    // clears the >= 15 threshold, so this is 3000 x 15 with 10% off.
+    assert.equal((await response.json()).total_cents, 40500);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("guest-enroll caps num_classes_enrolled at max(program.num_classes, 15)", async () => {
+  const { ctx } = makeCtx([
+    { rows: [{ id: "sched-1", program_id: "prog-1", program_name: "Ballet", program_num_classes: 20, price_cents: 3000, max_seats: 10 }] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ id: "enrollment-1" }] },
+    { rows: [] },
+  ]);
+  const originalFetch = global.fetch;
+  global.fetch = stubFetch([
+    { user: { id: "guest-user-1" } },
+    { access_token: "guest-token" },
+    { id: "product-1" },
+    { orderId: "order-1", url: "https://stripe.test/checkout" },
+  ]);
+
+  try {
+    const response = await handler(request({
+      schedule_id: "sched-1",
+      student_name: "Ada",
+      student_email: "ada@example.com",
+      num_classes_enrolled: 99,
+    }), ctx);
+
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).total_cents, 54000);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("guest-enroll rejects schedule_ids that don't share one bundle signature", async () => {
   const { ctx, queries } = makeCtx([
     { rows: [{ id: "sched-1", program_id: "prog-1", semester_id: "sem-1", session_type: "standard", start_time: "16:00", end_time: "17:00", age_group: "7-12", price_cents: 3000, max_seats: 10, day_of_week: "Monday" }] },

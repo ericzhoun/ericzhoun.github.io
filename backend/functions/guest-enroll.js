@@ -47,8 +47,8 @@ export async function handler(req, ctx) {
   }
   const schedule = scheduleRes.rows[0];
 
-  const maxClasses = schedule.program_num_classes || 8;
-  if (!Number.isFinite(numClasses) || numClasses < 1) numClasses = maxClasses;
+  const maxClasses = Math.max(schedule.program_num_classes || 15, 15);
+  if (!Number.isFinite(numClasses) || numClasses < 10) numClasses = 15;
   numClasses = Math.min(numClasses, maxClasses);
 
   // 2. Capacity: confirmed seats plus pending holds younger than 60 minutes

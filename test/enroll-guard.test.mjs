@@ -73,6 +73,65 @@ test("enroll-guard persists parent_name and a verified student_id", async () => 
   }
 });
 
+test("enroll-guard floors an out-of-range low num_classes_enrolled to the 15 default", async () => {
+  const { ctx } = makeCtx([
+    { rows: [{ id: "sched-1", program_id: "prog-1", program_name: "Ballet", program_num_classes: 8, price_cents: 3000, max_seats: 10 }] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ id: "enrollment-1" }] },
+    { rows: [] },
+  ]);
+  const originalFetch = global.fetch;
+  global.fetch = stubFetch([
+    { id: "product-1" },
+    { orderId: "order-1", url: "https://stripe.test/checkout" },
+  ]);
+
+  try {
+    const response = await handler(request({
+      schedule_id: "sched-1",
+      student_name: "Ada",
+      num_classes_enrolled: 4,
+    }), ctx);
+
+    assert.equal(response.status, 200);
+    // 15 classes hits the early-bird threshold (>= 15, before the 2026-08-15
+    // deadline), so this is 3000 x 15 with the 10% discount applied, not a
+    // bare 3000 x 15 - a deliberate side effect of the new default landing
+    // exactly on EARLY_BIRD_MIN_CLASSES.
+    assert.equal((await response.json()).total_cents, 40500);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("enroll-guard caps num_classes_enrolled at max(program.num_classes, 15)", async () => {
+  const { ctx } = makeCtx([
+    { rows: [{ id: "sched-1", program_id: "prog-1", program_name: "Ballet", program_num_classes: 20, price_cents: 3000, max_seats: 10 }] },
+    { rows: [{ held: "2" }] },
+    { rows: [{ id: "enrollment-1" }] },
+    { rows: [] },
+  ]);
+  const originalFetch = global.fetch;
+  global.fetch = stubFetch([
+    { id: "product-1" },
+    { orderId: "order-1", url: "https://stripe.test/checkout" },
+  ]);
+
+  try {
+    const response = await handler(request({
+      schedule_id: "sched-1",
+      student_name: "Ada",
+      num_classes_enrolled: 99,
+    }), ctx);
+
+    assert.equal(response.status, 200);
+    // 20 also clears the early-bird threshold: 3000 x 20 with 10% off.
+    assert.equal((await response.json()).total_cents, 54000);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("enroll-guard rejects a student_id that does not belong to the caller", async () => {
   const { ctx, queries } = makeCtx([
     { rows: [{ id: "sched-1", program_id: "prog-1", program_name: "Ballet", program_num_classes: 8, price_cents: 3000, max_seats: 10 }] },
