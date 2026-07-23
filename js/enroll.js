@@ -15,6 +15,7 @@ const state = {
   loading: true,
   error: "",
   enrolling: false,
+  parentName: "",
   studentName: "",
   studentEmail: "",
   studentPhone: "",
@@ -216,6 +217,16 @@ function render() {
       form.appendChild(lblEmail);
     }
 
+    const lblParent = el("label", "", "Parent Name");
+    const inpParent = document.createElement("input");
+    inpParent.type = "text";
+    inpParent.value = state.parentName;
+    inpParent.required = true;
+    inpParent.placeholder = "Parent/guardian full name";
+    inpParent.oninput = (e) => (state.parentName = e.target.value);
+    lblParent.appendChild(inpParent);
+    form.appendChild(lblParent);
+
     const lblName = el("label", "", "Student Name");
     const inpName = document.createElement("input");
     inpName.type = "text";
@@ -282,6 +293,7 @@ async function handleEnroll(e) {
           student_name: state.studentName,
           student_email: state.user.email || "",
           student_phone: state.studentPhone,
+          parent_name: state.parentName,
           num_classes_enrolled: state.numClasses,
         },
         getToken()
@@ -293,6 +305,7 @@ async function handleEnroll(e) {
         student_name: state.studentName,
         student_email: email,
         student_phone: state.studentPhone,
+        parent_name: state.parentName,
         num_classes_enrolled: state.numClasses,
       });
       // Prefill the claim step on the post-payment page (never in the URL).
@@ -346,7 +359,7 @@ async function init() {
 
     if (isLoggedIn()) {
       state.user = getUser();
-      state.studentName = state.user.display_name || state.user.email || "";
+      state.parentName = state.user.display_name || state.user.email || "";
     }
   } catch (err) {
     state.error = err.message;
