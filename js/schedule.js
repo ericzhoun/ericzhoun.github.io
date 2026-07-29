@@ -55,8 +55,17 @@ export function parseSnapshot(rawText) {
   return data;
 }
 
-/** Pick the default semester: "Fall 2026" if present, else the first in the list. */
-export function pickDefaultSemester(semesters) {
+/**
+ * Pick the default semester: `requestedName` if it matches one (case-insensitive),
+ * else "Fall 2026" if present, else the first in the list.
+ */
+export function pickDefaultSemester(semesters, requestedName) {
+  if (requestedName) {
+    const requested = semesters.find(
+      (s) => s.name.trim().toLowerCase() === requestedName.trim().toLowerCase()
+    );
+    if (requested) return requested;
+  }
   const fall2026 = semesters.find((s) => s.name.trim().toLowerCase() === "fall 2026");
   return fall2026 || semesters[0];
 }
@@ -305,6 +314,7 @@ async function changeSemester(semesterId) {
 }
 
 async function init() {
+  const requestedSemester = new URLSearchParams(window.location.search).get("semester");
   const snapshotEl = document.getElementById("schedule-snapshot");
   const snapshot = snapshotEl ? parseSnapshot(snapshotEl.textContent) : null;
 
@@ -312,7 +322,7 @@ async function init() {
     state.semesters = snapshot.semesters;
     state.programs = snapshot.programs;
     state.schedulesBySemester = snapshot.schedulesBySemester;
-    const defaultSemester = pickDefaultSemester(snapshot.semesters);
+    const defaultSemester = pickDefaultSemester(snapshot.semesters, requestedSemester);
     state.selectedSemester = defaultSemester.id;
     state.schedules = snapshot.schedulesBySemester[defaultSemester.id] || [];
     state.loading = false;
@@ -329,7 +339,7 @@ async function init() {
     state.programs = programs;
 
     if (sems.length > 0) {
-      const defaultSemester = pickDefaultSemester(sems);
+      const defaultSemester = pickDefaultSemester(sems, requestedSemester);
       state.selectedSemester = defaultSemester.id;
       state.schedules = await apiGet(scheduleQuery(defaultSemester.id));
     }
