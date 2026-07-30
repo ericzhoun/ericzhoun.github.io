@@ -6,8 +6,6 @@
     const slides = Array.from(carousel.querySelectorAll('.art-class-carousel-slide'));
     if (slides.length < 2) return;
 
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-
     let activeIndex = slides.findIndex((slide) => slide.classList.contains('is-active'));
     if (activeIndex < 0) activeIndex = 0;
 
@@ -95,7 +93,7 @@
     };
 
     const startRotation = () => {
-      if (!timer && !isHovered && !isFocused && !reduceMotion.matches) {
+      if (!timer && !isHovered && !isFocused) {
         timer = window.setInterval(showNextSlide, 3000);
       }
     };

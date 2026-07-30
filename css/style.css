@@ -921,12 +921,6 @@ textarea {
   border: 0;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .art-class-carousel-slide {
-    transition: none;
-  }
-}
-
 @media (max-width: 600px) {
   .art-class-carousel {
     padding-bottom: 24px;
