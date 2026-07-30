@@ -40,6 +40,7 @@
       }
       dot.addEventListener('click', () => {
         goToSlide(index);
+        dot.blur();
         restartTimer();
       });
       dotsContainer.appendChild(dot);
@@ -68,6 +69,7 @@
       prevBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         goToSlide(activeIndex - 1);
+        prevBtn.blur();
         restartTimer();
       });
     }
@@ -76,6 +78,7 @@
       nextBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         goToSlide(activeIndex + 1);
+        nextBtn.blur();
         restartTimer();
       });
     }
