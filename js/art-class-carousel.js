@@ -89,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const startRotation = () => {
     if (!timer && !isHovered && !isFocused && !reduceMotion.matches) {
-      timer = window.setInterval(showNextSlide, 6000);
+      timer = window.setInterval(showNextSlide, 3000);
     }
   };
 
