@@ -99,3 +99,49 @@ test("update-student returns 404 when no row matches", async () => {
   const res = await handler(req, ctx);
   assert.equal(res.status, 404);
 });
+
+test("create-enrollment writes a comped, confirmed row priced from the schedule", async () => {
+  const { req, ctx, calls } = requestWithDb(
+    {
+      action: "create-enrollment", user_id: "parent-7", student_id: "stu-1",
+      schedule_id: "sched-1", num_classes_enrolled: 8,
+      student_email: "parent@example.com", parent_name: "Pat Parent",
+    },
+    [
+      [{ price_cents: 3500 }],            // schedule lookup
+      [{ name: "Mia" }],                  // student ownership lookup
+      [{ id: "enr-1" }],                  // insert returning id
+    ],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 200);
+  const insert = calls[2];
+  assert.match(insert.sql, /INSERT INTO enrollments/);
+  assert.ok(insert.values.includes("confirmed"));
+  assert.ok(insert.values.includes(3500)); // price_per_class_cents from schedule
+  assert.ok(insert.values.includes(0));    // total_paid_cents comped
+});
+
+test("create-enrollment rejects a student not owned by the parent", async () => {
+  const { req, ctx } = requestWithDb(
+    {
+      action: "create-enrollment", user_id: "parent-7", student_id: "stu-x",
+      schedule_id: "sched-1", num_classes_enrolled: 8, student_email: "p@e.com", parent_name: "P",
+    },
+    [[{ price_cents: 3500 }], []], // schedule ok, student ownership empty
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 400);
+});
+
+test("create-enrollment 404s on an inactive/unknown schedule", async () => {
+  const { req, ctx } = requestWithDb(
+    {
+      action: "create-enrollment", user_id: "parent-7", student_id: "stu-1",
+      schedule_id: "gone", num_classes_enrolled: 8, student_email: "p@e.com", parent_name: "P",
+    },
+    [[]],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 404);
+});

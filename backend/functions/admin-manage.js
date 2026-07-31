@@ -23,6 +23,8 @@ export async function handler(req, ctx) {
       return addStudent(ctx, body);
     case "update-student":
       return updateStudent(ctx, body);
+    case "create-enrollment":
+      return createEnrollment(ctx, body);
     default:
       return json({ error: "Unknown action" }, 400);
   }
@@ -141,6 +143,50 @@ async function updateStudent(ctx, body) {
   );
   if (res.rows.length === 0) return json({ error: "Student not found" }, 404);
   return json({ student: res.rows[0] }, 200);
+}
+
+// Grants a comped, already-confirmed enrollment. Price comes from the
+// schedule (never the client); the student must belong to the parent. The
+// student/parent fields are denormalized so the row reads consistently in the
+// enrollments list, attendance sheet, and the parent's account page.
+async function createEnrollment(ctx, body) {
+  const userId = str(body.user_id);
+  const studentId = str(body.student_id);
+  const scheduleId = str(body.schedule_id);
+  const numClasses = parseInt(body.num_classes_enrolled, 10);
+  if (!userId || !studentId || !scheduleId) {
+    return json({ error: "Parent, student, and schedule are required" }, 400);
+  }
+  if (!Number.isFinite(numClasses) || numClasses < 1) {
+    return json({ error: "Number of classes must be at least 1" }, 400);
+  }
+
+  const scheduleRes = await ctx.db.query(
+    `SELECT price_cents FROM class_schedules WHERE id = $1 AND active = true`,
+    [scheduleId],
+  );
+  if (scheduleRes.rows.length === 0) return json({ error: "Class schedule not found" }, 404);
+  const priceCents = scheduleRes.rows[0].price_cents;
+
+  const studentRes = await ctx.db.query(
+    `SELECT name FROM students WHERE id = $1 AND user_id = $2`,
+    [studentId, userId],
+  );
+  if (studentRes.rows.length === 0) {
+    return json({ error: "That student does not belong to this parent" }, 400);
+  }
+  const studentName = studentRes.rows[0].name;
+
+  const res = await ctx.db.query(
+    `INSERT INTO enrollments (schedule_id, user_id, student_name, student_email, student_phone,
+                              status, num_classes_enrolled, price_per_class_cents, discount_pct,
+                              total_paid_cents, parent_name, student_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+     RETURNING id`,
+    [scheduleId, userId, studentName, str(body.student_email), str(body.student_phone),
+     'confirmed', numClasses, priceCents, 0, 0, str(body.parent_name), studentId],
+  );
+  return json({ enrollment: { id: res.rows[0].id } }, 200);
 }
 
 // Copied verbatim from manage-students.js (functions are single-file, so the
