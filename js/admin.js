@@ -1,5 +1,5 @@
 import { adminApi, callFunction, formatPrice, formatTime, planCampBundleSync } from "./api.js";
-import { getToken, getUser, isAdmin, logout } from "./auth.js";
+import { getToken, getUser, isAdmin, logout, refreshToken } from "./auth.js";
 
 const nav = [
   ["dashboard", "Dashboard"], ["programs", "Programs"], ["semesters", "Semesters"],
@@ -12,7 +12,12 @@ const esc = (v = "") => String(v).replace(/[&<>\"']/g, (c) => ({ "&":"&amp;", "<
 const date = (v) => v ? new Date(v).toLocaleDateString() : "-";
 const query = () => location.hash.slice(1) || "dashboard";
 const button = (label, action = "", cls = "btn btn-sm") => `<button class="${cls}" data-action="${action}">${label}</button>`;
-const adminFn = (action, body = {}) => callFunction("admin-manage", { action, ...body }, getToken());
+// admin-manage is the one admin surface authenticated as the end user rather
+// than with the embedded service key, so its token has to be fresh: a stored
+// access token expires after an hour and the platform rejects it at the edge
+// with AUTH_REQUIRED. account.js refreshes before every call for this reason.
+const adminFn = async (action, body = {}) =>
+  callFunction("admin-manage", { action, ...body }, (await refreshToken()) || getToken());
 
 function notify(message) { notification = message; }
 function renderNotification() {

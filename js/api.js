@@ -65,8 +65,15 @@ export async function callFunction(name, body, token) {
   });
   const data = await res.json();
   if (!res.ok) {
-    const err = new Error(data.error || `Function error: ${res.status}`);
-    err.code = data.code;
+    // Our own functions return a flat { error: "message" }; the platform edge
+    // (auth, routing, validation) returns { error: { code, message } }. Without
+    // unwrapping the nested shape the message renders as "[object Object]".
+    const detail = data.error;
+    const nested = detail && typeof detail === "object" ? detail : null;
+    const err = new Error(
+      (nested ? nested.message : detail) || data.message || `Function error: ${res.status}`
+    );
+    err.code = data.code || nested?.code;
     throw err;
   }
   return data;

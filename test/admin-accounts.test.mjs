@@ -54,3 +54,14 @@ test("admin.js create-account success path routes into accountDetail using the r
   const script = await readAdmin();
   assert.match(script, /res\.account\.user_id/);
 });
+
+// A stored access token expires after an hour; the platform then rejects the
+// call at the edge with AUTH_REQUIRED before admin-manage ever runs. Every
+// other admin section uses the never-expiring service key, so the Accounts
+// section is the only one that has to refresh first.
+test("admin.js refreshes the access token before calling admin-manage", async () => {
+  const script = await readAdmin();
+  assert.match(script, /refreshToken/);
+  assert.match(script, /await refreshToken\(\)/);
+  assert.doesNotMatch(script, /callFunction\("admin-manage", \{ action, \.\.\.body \}, getToken\(\)\)/);
+});
