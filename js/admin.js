@@ -1,9 +1,10 @@
-import { adminApi, formatPrice, formatTime, planCampBundleSync } from "./api.js";
-import { getUser, isAdmin, logout } from "./auth.js";
+import { adminApi, callFunction, formatPrice, formatTime, planCampBundleSync } from "./api.js";
+import { getToken, getUser, isAdmin, logout } from "./auth.js";
 
 const nav = [
   ["dashboard", "Dashboard"], ["programs", "Programs"], ["semesters", "Semesters"],
-  ["schedules", "Schedules"], ["sessions", "Sessions"], ["enrollments", "Enrollments"], ["students", "Students"],
+  ["schedules", "Schedules"], ["sessions", "Sessions"], ["enrollments", "Enrollments"],
+  ["students", "Students"], ["accounts", "Accounts"],
 ];
 const app = document.querySelector("#admin-app");
 let notification = "";
@@ -11,6 +12,7 @@ const esc = (v = "") => String(v).replace(/[&<>\"']/g, (c) => ({ "&":"&amp;", "<
 const date = (v) => v ? new Date(v).toLocaleDateString() : "-";
 const query = () => location.hash.slice(1) || "dashboard";
 const button = (label, action = "", cls = "btn btn-sm") => `<button class="${cls}" data-action="${action}">${label}</button>`;
+const adminFn = (action, body = {}) => callFunction("admin-manage", { action, ...body }, getToken());
 
 function notify(message) { notification = message; }
 function renderNotification() {
@@ -383,5 +385,64 @@ async function attendance(sessionId) {
     }
   }, { once: true });
 }
-async function render() { if (!guard()) return; renderNav(); try { const id = query(); if (id === "dashboard") await dashboard(); else if (configs[id]) await crud(id); else if (id === "enrollments") await enrollments(); else if (id === "students") await students(); else if (id === "sessions") await sessions(); else app.innerHTML = `<h1>${id[0].toUpperCase() + id.slice(1)}</h1><p class="muted">Section unavailable.</p>`; renderNotification(); } catch (err) { app.innerHTML = `<p class="auth-error">${esc(err.message)}</p>`; } }
+async function accounts() {
+  const { accounts: list } = await adminFn("list-accounts");
+  const rows = list.map((a) => `<tr>
+    <td>${esc(a.name || "-")}</td><td>${esc(a.email || "-")}</td>
+    <td>${a.student_count}</td><td>${a.enrollment_count}</td>
+    <td>${button("Manage", `account:${esc(a.user_id)}:${esc(a.email || "")}:${esc(a.name || "")}`)}</td>
+  </tr>`).join("");
+  app.innerHTML = `<div class="admin-crud-header"><h1>Accounts</h1>${button("+ New account", "new-account")}</div>
+    <div id="form-slot"></div>
+    ${table(["Parent", "Email", "Students", "Enrollments", "Actions"], rows)}`;
+  app.addEventListener("click", async (event) => {
+    const action = event.target.dataset.action || "";
+    if (action === "new-account") { renderNewAccountForm(); return; }
+    if (action.startsWith("account:")) {
+      const [, userId, email, name] = action.split(":");
+      await accountDetail(userId, email, name);
+    }
+  }, { once: true });
+}
+
+function renderNewAccountForm() {
+  document.querySelector("#form-slot").innerHTML = `<form id="record-form" class="admin-form">
+    <h3>New parent account</h3><p class="auth-error" id="form-error" hidden></p>
+    <label>Email<input name="email" type="email" required></label>
+    <label>Parent name<input name="display_name" required></label>
+    <p class="hint">The parent gets no password - they sign in later with an email code.</p>
+    <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Create account</button>
+    <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div>
+  </form>`;
+  const formEl = document.querySelector("#record-form");
+  const errorEl = formEl.querySelector("#form-error");
+  formEl.querySelector('[data-action="cancel-form"]').addEventListener("click", () => render());
+  formEl.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const saveButton = formEl.querySelector("[data-save-button]");
+    saveButton.disabled = true; saveButton.textContent = "Creating…"; errorEl.hidden = true;
+    const data = Object.fromEntries(new FormData(e.currentTarget));
+    try {
+      await adminFn("create-account", { email: data.email, display_name: data.display_name });
+      notify("Account created. The parent can sign in with an email code.");
+      render();
+    } catch (error) {
+      errorEl.textContent = /EMAIL_EXISTS/i.test(error.message)
+        ? "An account with this email already exists."
+        : (error.message || "Could not create the account.");
+      errorEl.hidden = false;
+      saveButton.disabled = false; saveButton.textContent = "Create account";
+    }
+  });
+}
+
+async function accountDetail(userId, email, name) {
+  app.innerHTML = `<div class="admin-crud-header"><h1>${esc(name || email || "Parent")}</h1>
+    ${button("← Back to Accounts", "back-to-accounts")}</div><p class="muted">Loading…</p>`;
+  app.addEventListener("click", (event) => {
+    if ((event.target.dataset.action || "") === "back-to-accounts") accounts();
+  }, { once: true });
+}
+
+async function render() { if (!guard()) return; renderNav(); try { const id = query(); if (id === "dashboard") await dashboard(); else if (configs[id]) await crud(id); else if (id === "enrollments") await enrollments(); else if (id === "students") await students(); else if (id === "sessions") await sessions(); else if (id === "accounts") await accounts(); else app.innerHTML = `<h1>${id[0].toUpperCase() + id.slice(1)}</h1><p class="muted">Section unavailable.</p>`; renderNotification(); } catch (err) { app.innerHTML = `<p class="auth-error">${esc(err.message)}</p>`; } }
 window.addEventListener("hashchange", render); document.querySelector("#admin-logout").addEventListener("click", async () => { await logout(); location.href = "index.html"; }); render();
