@@ -19,6 +19,10 @@ export async function handler(req, ctx) {
   switch (body.action) {
     case "create-account":
       return createAccount(ctx, body);
+    case "add-student":
+      return addStudent(ctx, body);
+    case "update-student":
+      return updateStudent(ctx, body);
     default:
       return json({ error: "Unknown action" }, 400);
   }
@@ -93,4 +97,68 @@ function randomPassword() {
   const bytes = crypto.getRandomValues(new Uint8Array(24));
   const base = btoa(String.fromCharCode(...bytes)).replace(/[+/=]/g, "");
   return `Aa1!${base}`;
+}
+
+// Inserts a student owned by the target user_id (not the admin), allowing
+// admins to add students to any parent account.
+async function addStudent(ctx, body) {
+  const userId = str(body.user_id);
+  const name = str(body.name);
+  const dob = str(body.dob);
+  if (!userId) return json({ error: "Parent account id is required" }, 400);
+  if (!name) return json({ error: "Student name is required" }, 400);
+  const age = calculateStudentAge(dob);
+  if (age == null) return json({ error: "A valid date of birth is required" }, 400);
+
+  const res = await ctx.db.query(
+    `INSERT INTO students (user_id, name, age, dob, notes)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [userId, name, String(age), dob, str(body.notes)],
+  );
+  return json({ student: res.rows[0] }, 200);
+}
+
+// Updates a student (any student, since this is admin-only).
+async function updateStudent(ctx, body) {
+  const id = str(body.id);
+  const name = str(body.name);
+  const dob = str(body.dob);
+  if (!id) return json({ error: "Student id is required" }, 400);
+  const age = calculateStudentAge(dob);
+  if (age == null) return json({ error: "A valid date of birth is required" }, 400);
+
+  const fields = { age: String(age), dob };
+  if (name !== null) fields.name = name;
+  if (body.notes !== undefined) fields.notes = str(body.notes);
+  const keys = Object.keys(fields);
+  const sets = keys.map((k, i) => `${k} = $${i + 1}`).join(", ");
+  const values = keys.map((k) => fields[k]);
+  values.push(id);
+
+  const res = await ctx.db.query(
+    `UPDATE students SET ${sets} WHERE id = $${values.length} RETURNING *`,
+    values,
+  );
+  if (res.rows.length === 0) return json({ error: "Student not found" }, 404);
+  return json({ student: res.rows[0] }, 200);
+}
+
+// Copied verbatim from manage-students.js (functions are single-file, so the
+// helper must be self-contained and keep the same UTC convention).
+function calculateStudentAge(dob, today = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dob || "")) return null;
+  const [year, month, day] = dob.split("-").map(Number);
+  const birthDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    birthDate.getUTCFullYear() !== year ||
+    birthDate.getUTCMonth() !== month - 1 ||
+    birthDate.getUTCDate() !== day
+  ) return null;
+  const todayDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  if (birthDate > todayDate) return null;
+  const age = today.getUTCFullYear() - year;
+  const birthdayHasPassed =
+    today.getUTCMonth() > month - 1 ||
+    (today.getUTCMonth() === month - 1 && today.getUTCDate() >= day);
+  return age - (birthdayHasPassed ? 0 : 1);
 }

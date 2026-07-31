@@ -56,3 +56,46 @@ test("create-account maps a duplicate email to EMAIL_EXISTS 409", async () => {
     assert.equal(data.code, "EMAIL_EXISTS");
   } finally { restore(); }
 });
+
+function requestWithDb(body, rowsPerCall) {
+  const base = request(body);
+  const calls = [];
+  let i = 0;
+  base.ctx.db = {
+    async query(sql, values) {
+      calls.push({ sql, values });
+      const rows = rowsPerCall[i] ?? [];
+      i += 1;
+      return { rows, rowCount: rows.length };
+    },
+  };
+  base.calls = calls;
+  return base;
+}
+
+test("add-student inserts a student owned by the target user_id, not the admin", async () => {
+  const { req, ctx, calls } = requestWithDb(
+    { action: "add-student", user_id: "parent-7", name: "Mia", dob: "2016-05-01" },
+    [[{ id: "stu-1", user_id: "parent-7", name: "Mia" }]],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 200);
+  assert.ok(calls[0].values.includes("parent-7"));
+  assert.ok(calls[0].values.includes("Mia"));
+});
+
+test("add-student rejects an invalid date of birth", async () => {
+  const { req, ctx } = requestWithDb(
+    { action: "add-student", user_id: "parent-7", name: "Mia", dob: "not-a-date" }, [],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 400);
+});
+
+test("update-student returns 404 when no row matches", async () => {
+  const { req, ctx } = requestWithDb(
+    { action: "update-student", id: "missing", name: "X", dob: "2016-05-01" }, [[]],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 404);
+});
