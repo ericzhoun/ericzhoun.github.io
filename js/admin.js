@@ -12,12 +12,17 @@ const esc = (v = "") => String(v).replace(/[&<>\"']/g, (c) => ({ "&":"&amp;", "<
 const date = (v) => v ? new Date(v).toLocaleDateString() : "-";
 const query = () => location.hash.slice(1) || "dashboard";
 const button = (label, action = "", cls = "btn btn-sm") => `<button class="${cls}" data-action="${action}">${label}</button>`;
-// admin-manage is the one admin surface authenticated as the end user rather
-// than with the embedded service key, so its token has to be fresh: a stored
-// access token expires after an hour and the platform rejects it at the edge
-// with AUTH_REQUIRED. account.js refreshes before every call for this reason.
+// The admin's token goes in X-Admin-Token rather than Authorization, and the
+// token argument is deliberately null. admin-manage needs ctx.db to run as
+// butterbase_service to read and write across parents (students and
+// enrollments are behind user-isolation RLS), and any end-user JWT in
+// Authorization binds the request to butterbase_user instead, re-enabling RLS.
+// The function verifies this header against the auth service itself. The token
+// still has to be fresh, since a stored one expires after an hour.
 const adminFn = async (action, body = {}) =>
-  callFunction("admin-manage", { action, ...body }, (await refreshToken()) || getToken());
+  callFunction("admin-manage", { action, ...body }, null, {
+    "X-Admin-Token": (await refreshToken()) || getToken() || "",
+  });
 
 function notify(message) { notification = message; }
 function renderNotification() {

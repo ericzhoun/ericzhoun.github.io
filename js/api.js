@@ -55,8 +55,8 @@ export async function adminApi(path, options = {}) {
 /**
  * Call a Butterbase serverless function (enroll-guard, book-class) with auth.
  */
-export async function callFunction(name, body, token) {
-  const headers = { "Content-Type": "application/json" };
+export async function callFunction(name, body, token, extraHeaders) {
+  const headers = { "Content-Type": "application/json", ...(extraHeaders || {}) };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetchWithTimeout(`${API_BASE}/fn/${name}`, {
     method: "POST",

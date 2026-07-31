@@ -91,18 +91,39 @@ Two concerns keep these operations off the browser service key:
   client-side `isAdmin()` guard plus an all-powerful key shipped to the
   browser.
 
-So all four operations move behind one function, `admin-manage.js`, deployed
-`auth: required`, `allow_service_key_impersonation: false` - matching
-`manage-students.js`. Every action first resolves the caller via
-`/auth/{appId}/me` (using the forwarded end-user token) and rejects unless the
-email is in the admin allowlist (`herfield8@gmail.com`,
-`lightbyolivia@gmail.com` - the same list `manage-students.js` uses). This is
-defense in depth: the frontend also guards with `isAdmin()`, but the function
-never trusts that.
+So all four operations move behind one function, `admin-manage.js`.
 
-The frontend calls it with Olivia's JWT via the existing
-`callFunction(name, body, token)` helper (`api.js`), passing
-`getToken()` from `auth.js` - **not** `adminApi`.
+**Trigger auth and the RLS constraint (corrected 2026-07-31).** The function is
+deployed `auth: none`, not `auth: required`. `students` and `enrollments` carry
+user-isolation RLS policies (`USING` and `WITH CHECK` on
+`user_id = current_user_id()`), so an admin running as `butterbase_user` can
+neither read another parent's rows nor insert rows owned by them - which is the
+entire feature. `ctx.db` only binds `butterbase_service` (admitted by the
+`*_service_bypass` policies) when the request carries **no** end-user JWT in
+`Authorization`; supplying one re-enables RLS even on an `auth: none` function.
+This was verified empirically with a throwaway probe function: no auth header →
+`butterbase_service`, all rows visible; valid JWT → `butterbase_user`, RLS
+enforced.
+
+The admin's token therefore travels in the **`X-Admin-Token`** header, and
+`requireAdmin` verifies it against `/auth/{appId}/me` and requires the returned
+email to be in the admin allowlist (`herfield8@gmail.com`,
+`lightbyolivia@gmail.com`). Because the endpoint is publicly reachable, that
+check is the only gate: it fails closed on a missing token, an unverifiable
+token, a non-allowlisted email, or a network error, and `ctx.user` (always null
+here) is never treated as a credential. `trigger-schedule-bake` uses the same
+`auth: none` plus self-authorization pattern.
+
+*Accepted tradeoff:* this gives up the edge's built-in auth rejection in
+exchange for service-role data access. The alternative that keeps both -
+`auth: required` for the edge check plus `SERVICE_KEY` REST calls for every
+read and write - would require re-expressing all six actions (including the
+`list-accounts` aggregate) as REST calls with JS-side aggregation. Worth
+revisiting if this endpoint's blast radius grows.
+
+The frontend calls it via `callFunction(name, body, token, extraHeaders)`
+(`api.js`) with `token` explicitly `null` and the freshly refreshed JWT in
+`X-Admin-Token` - **not** `adminApi`.
 
 ### `admin-manage.js` actions
 

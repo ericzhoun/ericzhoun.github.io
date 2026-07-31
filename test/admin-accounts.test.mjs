@@ -55,13 +55,22 @@ test("admin.js create-account success path routes into accountDetail using the r
   assert.match(script, /res\.account\.user_id/);
 });
 
-// A stored access token expires after an hour; the platform then rejects the
-// call at the edge with AUTH_REQUIRED before admin-manage ever runs. Every
-// other admin section uses the never-expiring service key, so the Accounts
-// section is the only one that has to refresh first.
+// A stored access token expires after an hour, so the admin call has to
+// refresh first rather than reuse whatever is in localStorage.
 test("admin.js refreshes the access token before calling admin-manage", async () => {
   const script = await readAdmin();
   assert.match(script, /refreshToken/);
   assert.match(script, /await refreshToken\(\)/);
   assert.doesNotMatch(script, /callFunction\("admin-manage", \{ action, \.\.\.body \}, getToken\(\)\)/);
+});
+
+// students and enrollments are behind user-isolation RLS, so admin-manage
+// needs ctx.db as butterbase_service. Any end-user JWT in Authorization binds
+// the request to butterbase_user and silently re-enables RLS, which empties
+// the accounts grid and blocks writes for other parents. The token must
+// therefore travel in X-Admin-Token with the token argument left null.
+test("admin.js sends the admin token in X-Admin-Token, never as a bearer token", async () => {
+  const script = await readAdmin();
+  assert.match(script, /"X-Admin-Token"/);
+  assert.match(script, /callFunction\("admin-manage", \{ action, \.\.\.body \}, null, \{/);
 });

@@ -1,10 +1,20 @@
 // Admin-only management: create parent accounts, manage their students,
-// grant comped enrollments, and adjust credits. HTTP trigger: auth "required".
-// Every action is gated on the admin email allowlist server-side (defense in
-// depth - the frontend also guards, but this never trusts it). Account
-// creation calls the auth signup endpoint (mirroring guest-enroll); all other
-// reads/writes run through ctx.db. The auth app_users table is not reachable
-// from a function, so account enumeration is derived from app tables.
+// grant comped enrollments, and adjust credits.
+//
+// HTTP trigger: auth "none", deliberately. students and enrollments carry
+// user-isolation RLS policies (USING and WITH CHECK on
+// user_id = current_user_id()), so under the butterbase_user role an admin can
+// neither read another parent's rows nor insert rows owned by them - which is
+// the entire feature. ctx.db only runs as butterbase_service, which the
+// *_service_bypass policies admit, when the request carries no end-user JWT in
+// Authorization; supplying one re-enables RLS even on an auth "none" function.
+//
+// So the admin's token travels in the X-Admin-Token header instead, and this
+// function verifies it against /auth/{appId}/me and checks the email allowlist
+// itself. The endpoint is therefore publicly reachable and requireAdmin is the
+// only gate: it must fail closed, and ctx.user (always null here) is never
+// treated as a credential. trigger-schedule-bake uses the same auth "none"
+// plus self-authorization pattern.
 const ADMIN_EMAILS = ["herfield8@gmail.com", "lightbyolivia@gmail.com"];
 
 export async function handler(req, ctx) {
@@ -34,24 +44,27 @@ export async function handler(req, ctx) {
   }
 }
 
-// Resolves the caller's email and confirms it is an admin. Prefers the email
-// on the verified token (ctx.user.email, as manage-students.js relies on);
-// falls back to /auth/{appId}/me only if the token omitted it.
+// Resolves the caller's identity from the X-Admin-Token header and returns
+// their email only if the auth service verifies the token and the email is on
+// the allowlist. Returns null on anything else, so every failure path (no
+// token, unverifiable token, non-admin, network error) denies access.
 async function requireAdmin(req, ctx) {
-  if (!ctx.user) return null;
-  let email = ctx.user.email || null;
-  if (!email) {
-    const apiBase = ctx.env.BUTTERBASE_API_URL || "https://api.butterbase.ai";
-    const appId = ctx.env.BUTTERBASE_APP_ID;
-    const authHeader = req.headers.get("authorization");
-    if (authHeader) {
-      const res = await fetch(`${apiBase}/auth/${appId}/me`, { headers: { Authorization: authHeader } });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const user = data.user || data;
-        if (user?.id === ctx.user.id) email = user.email || null;
-      }
-    }
+  const token = str(req.headers.get("x-admin-token"));
+  if (!token) return null;
+
+  const apiBase = ctx.env.BUTTERBASE_API_URL || "https://api.butterbase.ai";
+  const appId = ctx.env.BUTTERBASE_APP_ID;
+  let email = null;
+  try {
+    const res = await fetch(`${apiBase}/auth/${appId}/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => ({}));
+    email = (data.user || data || {}).email || null;
+  } catch (error) {
+    console.error("admin-manage identity check failed:", error && error.message);
+    return null;
   }
   return email && ADMIN_EMAILS.includes(email) ? email : null;
 }

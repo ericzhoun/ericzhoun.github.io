@@ -60,6 +60,20 @@ test("callFunction preserves a flat error code for EMAIL_EXISTS branching", asyn
   } finally { restore(); }
 });
 
+test("callFunction sends extra headers and omits Authorization when no token is given", async () => {
+  const original = global.fetch;
+  let sent = null;
+  global.fetch = async (url, options) => {
+    sent = options.headers;
+    return { ok: true, status: 200, json: async () => ({ accounts: [] }) };
+  };
+  try {
+    await callFunction("admin-manage", { action: "list-accounts" }, null, { "X-Admin-Token": "jwt-123" });
+    assert.equal(sent["X-Admin-Token"], "jwt-123");
+    assert.equal(sent.Authorization, undefined);
+  } finally { global.fetch = original; }
+});
+
 test("callFunction returns parsed data on success", async () => {
   const restore = stubFetch({ accounts: [{ user_id: "p1" }] }, true);
   try {
