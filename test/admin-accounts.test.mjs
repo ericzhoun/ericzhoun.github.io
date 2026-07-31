@@ -64,13 +64,12 @@ test("admin.js refreshes the access token before calling admin-manage", async ()
   assert.doesNotMatch(script, /callFunction\("admin-manage", \{ action, \.\.\.body \}, getToken\(\)\)/);
 });
 
-// students and enrollments are behind user-isolation RLS, so admin-manage
-// needs ctx.db as butterbase_service. Any end-user JWT in Authorization binds
-// the request to butterbase_user and silently re-enables RLS, which empties
-// the accounts grid and blocks writes for other parents. The token must
-// therefore travel in X-Admin-Token with the token argument left null.
-test("admin.js sends the admin token in X-Admin-Token, never as a bearer token", async () => {
+// Butterbase's CORS allowlist permits only Content-Type and Authorization (plus
+// its own X-Butterbase-* headers) cross-origin, so a custom auth header makes
+// the browser fail the preflight with "Failed to fetch". The admin token has to
+// ride Authorization.
+test("admin.js sends the admin token as a bearer token, not a custom header", async () => {
   const script = await readAdmin();
-  assert.match(script, /"X-Admin-Token"/);
-  assert.match(script, /callFunction\("admin-manage", \{ action, \.\.\.body \}, null, \{/);
+  assert.doesNotMatch(script, /X-Admin-Token/);
+  assert.match(script, /callFunction\("admin-manage", \{ action, \.\.\.body \}, \(await refreshToken\(\)\)/);
 });

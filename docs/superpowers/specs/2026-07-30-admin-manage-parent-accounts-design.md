@@ -94,36 +94,46 @@ Two concerns keep these operations off the browser service key:
 So all four operations move behind one function, `admin-manage.js`.
 
 **Trigger auth and the RLS constraint (corrected 2026-07-31).** The function is
-deployed `auth: none`, not `auth: required`. `students` and `enrollments` carry
-user-isolation RLS policies (`USING` and `WITH CHECK` on
-`user_id = current_user_id()`), so an admin running as `butterbase_user` can
-neither read another parent's rows nor insert rows owned by them - which is the
-entire feature. `ctx.db` only binds `butterbase_service` (admitted by the
-`*_service_bypass` policies) when the request carries **no** end-user JWT in
-`Authorization`; supplying one re-enables RLS even on an `auth: none` function.
-This was verified empirically with a throwaway probe function: no auth header →
-`butterbase_service`, all rows visible; valid JWT → `butterbase_user`, RLS
-enforced.
+deployed `auth: required`, and its data access does **not** use `ctx.db`.
 
-The admin's token therefore travels in the **`X-Admin-Token`** header, and
-`requireAdmin` verifies it against `/auth/{appId}/me` and requires the returned
-email to be in the admin allowlist (`herfield8@gmail.com`,
-`lightbyolivia@gmail.com`). Because the endpoint is publicly reachable, that
-check is the only gate: it fails closed on a missing token, an unverifiable
-token, a non-allowlisted email, or a network error, and `ctx.user` (always null
-here) is never treated as a credential. `trigger-schedule-bake` uses the same
-`auth: none` plus self-authorization pattern.
+`students` and `enrollments` carry user-isolation RLS policies (`USING` and
+`WITH CHECK` on `user_id = current_user_id()`), so an admin running as
+`butterbase_user` can neither read another parent's rows nor insert rows owned
+by them - which is the entire feature. Two facts, both verified empirically
+with a throwaway probe function, constrain the design:
 
-*Accepted tradeoff:* this gives up the edge's built-in auth rejection in
-exchange for service-role data access. The alternative that keeps both -
-`auth: required` for the edge check plus `SERVICE_KEY` REST calls for every
-read and write - would require re-expressing all six actions (including the
-`list-accounts` aggregate) as REST calls with JS-side aggregation. Worth
-revisiting if this endpoint's blast radius grows.
+1. `ctx.db` binds `butterbase_service` (admitted by the `*_service_bypass`
+   policies) only when the request carries **no** end-user JWT in
+   `Authorization`. With a JWT it binds `butterbase_user` and RLS applies -
+   *even on an `auth: none` function*. Probe: no auth header →
+   `butterbase_service`, all rows; valid JWT → `butterbase_user`, none.
+2. Moving the token to a custom header to dodge (1) does not work in a
+   browser. Butterbase's CORS response allows only
+   `Content-Type, Authorization, X-Signup-Source, X-Signup-Referrer,
+   X-Organization-Id, X-Butterbase-As-User`, so a custom auth header fails the
+   preflight and the browser reports "Failed to fetch". (curl never sends a
+   preflight, which is why this passed direct endpoint testing.)
 
-The frontend calls it via `callFunction(name, body, token, extraHeaders)`
-(`api.js`) with `token` explicitly `null` and the freshly refreshed JWT in
-`X-Admin-Token` - **not** `adminApi`.
+So the admin's JWT rides `Authorization` as normal, and **all reads and writes
+go through the REST data API with `SERVICE_KEY`** (`data()` helper), which the
+`*_service_bypass` policies admit - the same mechanism `guest-enroll` already
+uses for billing calls. `ctx.db` is unused. `list-accounts` fetches
+`students?select=user_id` and
+`enrollments?select=user_id,student_email,parent_name` and aggregates per
+`user_id` in JS, replacing the earlier SQL `UNION`.
+
+Authorization is layered: the platform edge rejects anonymous callers, and
+`requireAdmin` then re-verifies the bearer token against `/auth/{appId}/me` and
+requires the returned email to be in the admin allowlist
+(`herfield8@gmail.com`, `lightbyolivia@gmail.com`). It fails closed on a
+missing token, an unverifiable token, a non-allowlisted email, or a network
+error, and `ctx.user` is never treated as a credential on its own.
+
+Deployment consequence: this function requires `SERVICE_KEY` in its
+environment (`deploy.sh` injects it from `BUTTERBASE_API_KEY`).
+
+The frontend calls it via `callFunction(name, body, token)` (`api.js`) with a
+freshly refreshed JWT - **not** `adminApi`.
 
 ### `admin-manage.js` actions
 

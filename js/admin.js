@@ -12,17 +12,13 @@ const esc = (v = "") => String(v).replace(/[&<>\"']/g, (c) => ({ "&":"&amp;", "<
 const date = (v) => v ? new Date(v).toLocaleDateString() : "-";
 const query = () => location.hash.slice(1) || "dashboard";
 const button = (label, action = "", cls = "btn btn-sm") => `<button class="${cls}" data-action="${action}">${label}</button>`;
-// The admin's token goes in X-Admin-Token rather than Authorization, and the
-// token argument is deliberately null. admin-manage needs ctx.db to run as
-// butterbase_service to read and write across parents (students and
-// enrollments are behind user-isolation RLS), and any end-user JWT in
-// Authorization binds the request to butterbase_user instead, re-enabling RLS.
-// The function verifies this header against the auth service itself. The token
-// still has to be fresh, since a stored one expires after an hour.
+// Sends the admin's own JWT: admin-manage is auth "required" and re-verifies
+// it server-side. Authorization is the only header Butterbase's CORS allowlist
+// permits here, so the token cannot be moved to a custom header. It has to be
+// fresh, since a stored access token expires after an hour and the platform
+// then rejects the call at the edge before the function runs.
 const adminFn = async (action, body = {}) =>
-  callFunction("admin-manage", { action, ...body }, null, {
-    "X-Admin-Token": (await refreshToken()) || getToken() || "",
-  });
+  callFunction("admin-manage", { action, ...body }, (await refreshToken()) || getToken());
 
 function notify(message) { notification = message; }
 function renderNotification() {

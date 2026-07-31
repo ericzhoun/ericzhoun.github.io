@@ -51,21 +51,24 @@ payload; the endpoint treats omitted tables as drops and refuses them without
   num_classes_enrolled`, and the frontend now sends the bundle's day count
   as `num_classes_enrolled` for camps.
 
-## 2026-07-31 - admin-manage runs as service (no migration)
+## 2026-07-31 - admin-manage reads/writes via SERVICE_KEY (no migration)
 
-- `admin-manage` redeployed with http trigger `auth: none`. `students` and
-  `enrollments` carry user-isolation RLS (`USING`/`WITH CHECK` on
-  `user_id = current_user_id()`), so with `auth: required` the function ran as
-  `butterbase_user` and could not read other parents' rows or insert rows owned
-  by them - the accounts grid came back empty and every cross-parent write
-  would have failed. `ctx.db` only binds `butterbase_service` (which the
-  `*_service_bypass` policies admit) when the request carries no end-user JWT
-  in `Authorization`; sending one re-enables RLS even on an `auth: none`
-  function (verified empirically).
-- The admin JWT therefore travels in `X-Admin-Token`, and `requireAdmin`
-  verifies it against `/auth/{appId}/me` plus the admin allowlist. The endpoint
-  is publicly reachable, so that check is the only gate and fails closed.
-  `ctx.user` is null here and is never treated as a credential.
+- `students` and `enrollments` carry user-isolation RLS (`USING`/`WITH CHECK`
+  on `user_id = current_user_id()`). `admin-manage` originally used `ctx.db`,
+  which binds `butterbase_user` whenever the request carries an end-user JWT,
+  so the admin could only ever see her own rows: the accounts grid came back
+  empty and every cross-parent write would have been rejected by `WITH CHECK`.
+- `ctx.db` binds `butterbase_service` only when no JWT is present - true even
+  on an `auth: none` trigger (verified with a probe function). Passing the
+  token in a custom header to avoid that fails in browsers: Butterbase's CORS
+  allowlist is fixed at `Content-Type, Authorization, X-Signup-Source,
+  X-Signup-Referrer, X-Organization-Id, X-Butterbase-As-User`, so a custom auth
+  header fails the preflight ("Failed to fetch").
+- Resolution: the trigger stays `auth: required` with the admin JWT in
+  `Authorization`, and every read/write goes through the REST data API with
+  `SERVICE_KEY` (which the `*_service_bypass` policies admit), as
+  `guest-enroll` already does for billing. `ctx.db` is no longer used by this
+  function, and it now requires `SERVICE_KEY` in its environment.
 
 ## 2026-07-30 - admin-manage function (no migration)
 

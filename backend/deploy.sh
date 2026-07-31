@@ -29,7 +29,7 @@ CONFIGS=(
   "manage-account|required|/manage-account|false|Account management: update contact info on own enrollments, change password via forgot/reset-password email-code flow.",
   "manage-students|required|/manage-students|false|Student profile CRUD. Parents manage their own children; admin can manage any.",
   "manage-artwork|required|/manage-artwork|false|Artwork photo lifecycle: presigned upload/download URLs and delete, gated on student ownership. Storage calls use the service key."
-  "admin-manage|none|/admin-manage|false|Admin-only: create parent accounts, manage their students, grant comped enrollments, and adjust credits. auth none so ctx.db runs as butterbase_service (students/enrollments are behind user-isolation RLS); the admin JWT arrives in X-Admin-Token and the function verifies it against /auth/me and the admin allowlist itself."
+  "admin-manage|required|/admin-manage|false|Admin-only: create parent accounts, manage their students, grant comped enrollments, and adjust credits. Re-verifies the caller against /auth/me and the admin allowlist; reads and writes go through the REST data API with SERVICE_KEY because students/enrollments are behind user-isolation RLS that ctx.db cannot cross."
   "sync-student-ages|none||false|Refreshes enrollment ages from dates of birth once a day."
   "trigger-schedule-bake|none|/trigger-schedule-bake|false|Admin-only (checked against the service key, not ctx.user): dispatches the bake-schedule GitHub Actions workflow to refresh schedule.html's baked snapshot on demand."
 )
