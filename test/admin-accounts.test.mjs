@@ -31,3 +31,21 @@ test("admin.js create-account error path checks error.code, not a message regex"
   assert.match(script, /error\.code === "EMAIL_EXISTS"/);
   assert.doesNotMatch(script, /EMAIL_EXISTS.*test\(error\.message\)/);
 });
+
+test("admin.js detail view wires all four parent actions", async () => {
+  const script = await readAdmin();
+  for (const action of ["add-student", "update-student", "create-enrollment", "set-credits"]) {
+    assert.match(script, new RegExp(action));
+  }
+});
+
+test("admin.js reads the parent's own students and enrollments by user_id", async () => {
+  const script = await readAdmin();
+  assert.match(script, /students\?user_id=eq\./);
+  assert.match(script, /enrollments\?user_id=eq\./);
+});
+
+test("admin.js warns before setting credits below attended", async () => {
+  const script = await readAdmin();
+  assert.match(script, /below/i);
+});

@@ -438,10 +438,115 @@ function renderNewAccountForm() {
 }
 
 async function accountDetail(userId, email, name) {
-  app.innerHTML = `<div class="admin-crud-header"><h1>${esc(name || email || "Parent")}</h1>
-    ${button("← Back to Accounts", "back-to-accounts")}</div><p class="muted">Loading…</p>`;
-  app.addEventListener("click", (event) => {
-    if ((event.target.dataset.action || "") === "back-to-accounts") accounts();
+  const [students, enrollments, schedules, programs] = await Promise.all([
+    adminApi(`students?user_id=eq.${userId}&order=created_at.desc`),
+    adminApi(`enrollments?user_id=eq.${userId}&order=created_at.desc`),
+    adminApi("class_schedules?active=eq.true&order=created_at.desc"),
+    adminApi("programs?order=sort_order.asc"),
+  ]);
+  const programName = (id) => programs.find((p) => p.id === id)?.name || "-";
+  const scheduleLabel = (s) => `${programName(s.program_id)} - ${s.day_of_week} ${formatTime(s.start_time)} (${esc(s.age_group)})`;
+  const studentRows = students.map((s) => `<tr>
+    <td>${esc(s.name)}</td><td>${esc(s.age ?? "-")}</td><td>${esc(s.dob ?? "-")}</td>
+    <td>${button("Edit", `edit-student:${esc(s.id)}`)}</td></tr>`).join("");
+  const enrollmentRows = enrollments.map((en) => {
+    const schedule = schedules.find((s) => s.id === en.schedule_id);
+    return `<tr>
+      <td>${esc(en.student_name)}</td>
+      <td>${esc(schedule ? scheduleLabel(schedule) : "-")}</td>
+      <td><span class="status-badge status-${esc(en.status)}">${esc(en.status)}</span></td>
+      <td>${esc(en.num_classes_enrolled ?? 0)}</td>
+      <td>${button("Edit credits", `edit-credits:${esc(en.id)}:${esc(en.num_classes_enrolled ?? 0)}`)}</td>
+    </tr>`;
+  }).join("");
+  const studentOptions = students.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+  const scheduleOptions = schedules.map((s) => `<option value="${esc(s.id)}">${esc(scheduleLabel(s))}</option>`).join("");
+
+  app.innerHTML = `<div class="admin-crud-header">
+      <h1>${esc(name || email || "Parent")}</h1>${button("← Back to Accounts", "back-to-accounts")}</div>
+    <p class="muted">${esc(email || "")}</p>
+    <div id="form-slot"></div>
+    <section><div class="admin-crud-header"><h2>Students</h2>${button("+ Add student", "add-student-form")}</div>
+      ${table(["Name", "Age", "DOB", "Actions"], studentRows)}</section>
+    <section><div class="admin-crud-header"><h2>Enrollments</h2>
+      ${students.length ? button("+ Comp enrollment", "add-enrollment-form") : ""}</div>
+      ${table(["Student", "Class", "Status", "Credits", "Actions"], enrollmentRows)}</section>`;
+
+  const slot = () => document.querySelector("#form-slot");
+
+  function bindFormEl(onSubmit) {
+    const formEl = document.querySelector("#record-form");
+    const errorEl = formEl.querySelector("#form-error");
+    formEl.querySelector('[data-action="cancel-form"]').addEventListener("click", () => accountDetail(userId, email, name));
+    formEl.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const saveButton = formEl.querySelector("[data-save-button]");
+      saveButton.disabled = true; saveButton.textContent = "Saving…"; errorEl.hidden = true;
+      try {
+        await onSubmit(Object.fromEntries(new FormData(e.currentTarget)));
+        await accountDetail(userId, email, name);
+      } catch (error) {
+        errorEl.textContent = error.message || "Could not save. Please try again.";
+        errorEl.hidden = false; saveButton.disabled = false; saveButton.textContent = "Save";
+      }
+    });
+  }
+
+  app.addEventListener("click", async (event) => {
+    const action = event.target.dataset.action || "";
+    if (action === "back-to-accounts") { await accounts(); return; }
+
+    if (action === "add-student-form" || action.startsWith("edit-student:")) {
+      const editing = action.startsWith("edit-student:") ? students.find((s) => s.id === action.split(":")[1]) : null;
+      slot().innerHTML = `<form id="record-form" class="admin-form">
+        <h3>${editing ? "Edit student" : "Add student"}</h3><p class="auth-error" id="form-error" hidden></p>
+        <label>Name<input name="name" required value="${esc(editing?.name || "")}"></label>
+        <label>Date of birth<input name="dob" type="date" required value="${esc((editing?.dob || "").slice(0, 10))}"></label>
+        <label>Notes<textarea name="notes">${esc(editing?.notes || "")}</textarea></label>
+        <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
+      bindFormEl(async (data) => {
+        if (editing) await adminFn("update-student", { id: editing.id, name: data.name, dob: data.dob, notes: data.notes });
+        else await adminFn("add-student", { user_id: userId, name: data.name, dob: data.dob, notes: data.notes });
+        notify(editing ? "Student updated." : "Student added.");
+      });
+      return;
+    }
+
+    if (action === "add-enrollment-form") {
+      slot().innerHTML = `<form id="record-form" class="admin-form">
+        <h3>Comp enrollment</h3><p class="auth-error" id="form-error" hidden></p>
+        <label>Student<select name="student_id" required>${studentOptions}</select></label>
+        <label>Class<select name="schedule_id" required>${scheduleOptions}</select></label>
+        <label>Number of classes (credits)<input name="num_classes_enrolled" type="number" min="1" required value="8"></label>
+        <p class="hint">Creates a confirmed, comped enrollment - no payment.</p>
+        <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Create</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
+      bindFormEl(async (data) => {
+        await adminFn("create-enrollment", {
+          user_id: userId, student_id: data.student_id, schedule_id: data.schedule_id,
+          num_classes_enrolled: Number(data.num_classes_enrolled),
+          student_email: email, parent_name: name,
+        });
+        notify("Comped enrollment created.");
+      });
+      return;
+    }
+
+    if (action.startsWith("edit-credits:")) {
+      const [, enrollmentId, current] = action.split(":");
+      slot().innerHTML = `<form id="record-form" class="admin-form">
+        <h3>Edit credits</h3><p class="auth-error" id="form-error" hidden></p>
+        <label>Number of classes (credits)<input name="num_classes_enrolled" type="number" min="0" required value="${esc(current)}"></label>
+        <p class="hint">Credits = classes minus attended sessions. Lowering this below the attended count leaves a negative balance.</p>
+        <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
+      bindFormEl(async (data) => {
+        await adminFn("set-credits", { enrollment_id: enrollmentId, num_classes_enrolled: Number(data.num_classes_enrolled) });
+        notify("Credits updated.");
+      });
+      return;
+    }
   }, { once: true });
 }
 
