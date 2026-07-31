@@ -25,3 +25,9 @@ test("admin.js has a create-account form calling the create-account action", asy
   assert.match(script, /list-accounts/);
   assert.match(script, /create-account/);
 });
+
+test("admin.js create-account error path checks error.code, not a message regex", async () => {
+  const script = await readAdmin();
+  assert.match(script, /error\.code === "EMAIL_EXISTS"/);
+  assert.doesNotMatch(script, /EMAIL_EXISTS.*test\(error\.message\)/);
+});

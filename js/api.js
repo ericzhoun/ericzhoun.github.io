@@ -64,7 +64,11 @@ export async function callFunction(name, body, token) {
     body: JSON.stringify(body),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `Function error: ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Function error: ${res.status}`);
+    err.code = data.code;
+    throw err;
+  }
   return data;
 }
 

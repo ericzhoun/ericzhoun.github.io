@@ -390,7 +390,7 @@ async function accounts() {
   const rows = list.map((a) => `<tr>
     <td>${esc(a.name || "-")}</td><td>${esc(a.email || "-")}</td>
     <td>${a.student_count}</td><td>${a.enrollment_count}</td>
-    <td>${button("Manage", `account:${esc(a.user_id)}:${esc(a.email || "")}:${esc(a.name || "")}`)}</td>
+    <td>${button("Manage", `account:${esc(a.user_id)}`)}</td>
   </tr>`).join("");
   app.innerHTML = `<div class="admin-crud-header"><h1>Accounts</h1>${button("+ New account", "new-account")}</div>
     <div id="form-slot"></div>
@@ -399,8 +399,9 @@ async function accounts() {
     const action = event.target.dataset.action || "";
     if (action === "new-account") { renderNewAccountForm(); return; }
     if (action.startsWith("account:")) {
-      const [, userId, email, name] = action.split(":");
-      await accountDetail(userId, email, name);
+      const userId = action.slice("account:".length);
+      const account = list.find((a) => a.user_id === userId);
+      if (account) await accountDetail(account.user_id, account.email, account.name);
     }
   }, { once: true });
 }
@@ -427,7 +428,7 @@ function renderNewAccountForm() {
       notify("Account created. The parent can sign in with an email code.");
       render();
     } catch (error) {
-      errorEl.textContent = /EMAIL_EXISTS/i.test(error.message)
+      errorEl.textContent = error.code === "EMAIL_EXISTS"
         ? "An account with this email already exists."
         : (error.message || "Could not create the account.");
       errorEl.hidden = false;
