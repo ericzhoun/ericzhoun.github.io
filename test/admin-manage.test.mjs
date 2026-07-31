@@ -300,20 +300,21 @@ test("list-accounts aggregates parents across students and enrollments", async (
       }
       return {
         body: [
-          { user_id: "p1", student_email: "a@e.com", parent_name: "Alice" },
-          { user_id: "p1", student_email: "a@e.com", parent_name: "Alice" },
-          { user_id: "p3", student_email: "c@e.com", parent_name: "Cara" },
+          { user_id: "p1", student_email: "a@e.com", parent_name: "Updated Alice", created_at: "2026-07-31T12:00:00Z" },
+          { user_id: "p1", student_email: "a@e.com", parent_name: "Old Alice", created_at: "2026-07-01T12:00:00Z" },
+          { user_id: "p3", student_email: "c@e.com", parent_name: "Cara", created_at: "2026-07-02T12:00:00Z" },
         ],
       };
     },
   });
   assert.equal(res.status, 200);
+  assert.ok(dataCalls(res).some((call) => call.url.includes("order=created_at.desc")));
   const { accounts } = await res.json();
   const byId = Object.fromEntries(accounts.map((a) => [a.user_id, a]));
 
   // p1 has both students and enrollments
   assert.deepEqual(byId.p1, {
-    user_id: "p1", email: "a@e.com", name: "Alice", student_count: 2, enrollment_count: 2,
+    user_id: "p1", email: "a@e.com", name: "Updated Alice", student_count: 2, enrollment_count: 2,
   });
   // p2 has only students - still listed, with no email or name to show
   assert.deepEqual(byId.p2, {

@@ -266,7 +266,9 @@ async function setCredits(ctx, body) {
 async function listAccounts(ctx) {
   const [studentRows, enrollmentRows] = await Promise.all([
     data(ctx, "students?select=user_id"),
-    data(ctx, "enrollments?select=user_id,student_email,parent_name"),
+    // Newest rows carry the most recently saved contact information. Keep the
+    // ordering explicit because the REST API does not guarantee row order.
+    data(ctx, "enrollments?select=user_id,student_email,parent_name,created_at&order=created_at.desc"),
   ]);
 
   const accounts = new Map();
