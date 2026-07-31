@@ -207,6 +207,9 @@ async function setCredits(ctx, body) {
   const fields = ["num_classes_enrolled = $1"];
   const values = [numClasses];
   const status = str(body.status);
+  if (status && !["pending", "confirmed", "cancelled"].includes(status)) {
+    return json({ error: "Invalid status" }, 400);
+  }
   if (status) { values.push(status); fields.push(`status = $${values.length}`); }
   values.push(id);
 

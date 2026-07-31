@@ -424,9 +424,9 @@ function renderNewAccountForm() {
     saveButton.disabled = true; saveButton.textContent = "Creating…"; errorEl.hidden = true;
     const data = Object.fromEntries(new FormData(e.currentTarget));
     try {
-      await adminFn("create-account", { email: data.email, display_name: data.display_name });
+      const res = await adminFn("create-account", { email: data.email, display_name: data.display_name });
       notify("Account created. The parent can sign in with an email code.");
-      render();
+      await accountDetail(res.account.user_id, res.account.email, res.account.name);
     } catch (error) {
       errorEl.textContent = error.code === "EMAIL_EXISTS"
         ? "An account with this email already exists."
@@ -471,6 +471,7 @@ async function accountDetail(userId, email, name) {
     <section><div class="admin-crud-header"><h2>Enrollments</h2>
       ${students.length ? button("+ Comp enrollment", "add-enrollment-form") : ""}</div>
       ${table(["Student", "Class", "Status", "Credits", "Actions"], enrollmentRows)}</section>`;
+  renderNotification();
 
   const slot = () => document.querySelector("#form-slot");
 

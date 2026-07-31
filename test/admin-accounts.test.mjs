@@ -49,3 +49,8 @@ test("admin.js warns before setting credits below attended", async () => {
   const script = await readAdmin();
   assert.match(script, /below/i);
 });
+
+test("admin.js create-account success path routes into accountDetail using the returned account", async () => {
+  const script = await readAdmin();
+  assert.match(script, /res\.account\.user_id/);
+});

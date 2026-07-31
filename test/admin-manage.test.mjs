@@ -181,6 +181,14 @@ test("set-credits rejects a negative value", async () => {
   assert.equal(res.status, 400);
 });
 
+test("set-credits rejects an invalid status", async () => {
+  const { req, ctx } = requestWithDb(
+    { action: "set-credits", enrollment_id: "enr-1", num_classes_enrolled: 5, status: "bogus" }, [],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 400);
+});
+
 test("list-accounts returns derived parents with numeric counts", async () => {
   const { req, ctx } = requestWithDb(
     { action: "list-accounts" },
