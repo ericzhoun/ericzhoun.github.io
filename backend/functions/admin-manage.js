@@ -25,6 +25,8 @@ export async function handler(req, ctx) {
       return updateStudent(ctx, body);
     case "create-enrollment":
       return createEnrollment(ctx, body);
+    case "set-credits":
+      return setCredits(ctx, body);
     default:
       return json({ error: "Unknown action" }, 400);
   }
@@ -187,6 +189,31 @@ async function createEnrollment(ctx, body) {
      'confirmed', numClasses, priceCents, 0, 0, str(body.parent_name), studentId],
   );
   return json({ enrollment: { id: res.rows[0].id } }, 200);
+}
+
+// Adjusts an enrollment's paid class count (credits = this minus attended,
+// computed in account.js). Below-attended values are allowed as an admin
+// override; the UI warns before sending them.
+async function setCredits(ctx, body) {
+  const id = str(body.enrollment_id);
+  const numClasses = parseInt(body.num_classes_enrolled, 10);
+  if (!id) return json({ error: "Enrollment id is required" }, 400);
+  if (!Number.isFinite(numClasses) || numClasses < 0) {
+    return json({ error: "Number of classes must be zero or more" }, 400);
+  }
+
+  const fields = ["num_classes_enrolled = $1"];
+  const values = [numClasses];
+  const status = str(body.status);
+  if (status) { values.push(status); fields.push(`status = $${values.length}`); }
+  values.push(id);
+
+  const res = await ctx.db.query(
+    `UPDATE enrollments SET ${fields.join(", ")} WHERE id = $${values.length} RETURNING *`,
+    values,
+  );
+  if (res.rows.length === 0) return json({ error: "Enrollment not found" }, 404);
+  return json({ enrollment: res.rows[0] }, 200);
 }
 
 // Copied verbatim from manage-students.js (functions are single-file, so the

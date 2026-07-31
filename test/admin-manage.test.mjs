@@ -145,3 +145,38 @@ test("create-enrollment 404s on an inactive/unknown schedule", async () => {
   const res = await handler(req, ctx);
   assert.equal(res.status, 404);
 });
+
+test("set-credits updates num_classes_enrolled and returns the row", async () => {
+  const { req, ctx, calls } = requestWithDb(
+    { action: "set-credits", enrollment_id: "enr-1", num_classes_enrolled: 12 },
+    [[{ id: "enr-1", num_classes_enrolled: 12 }]],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 200);
+  assert.ok(calls[0].values.includes(12));
+});
+
+test("set-credits allows a below-attended (even zero) value", async () => {
+  const { req, ctx } = requestWithDb(
+    { action: "set-credits", enrollment_id: "enr-1", num_classes_enrolled: 0 },
+    [[{ id: "enr-1", num_classes_enrolled: 0 }]],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 200);
+});
+
+test("set-credits 404s for an unknown enrollment", async () => {
+  const { req, ctx } = requestWithDb(
+    { action: "set-credits", enrollment_id: "gone", num_classes_enrolled: 5 }, [[]],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 404);
+});
+
+test("set-credits rejects a negative value", async () => {
+  const { req, ctx } = requestWithDb(
+    { action: "set-credits", enrollment_id: "enr-1", num_classes_enrolled: -3 }, [],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 400);
+});
