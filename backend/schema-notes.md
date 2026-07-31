@@ -50,3 +50,14 @@ payload; the endpoint treats omitted tables as drops and refuses them without
   bundle correctly because they compute `price_per_class_cents *
   num_classes_enrolled`, and the frontend now sends the bundle's day count
   as `num_classes_enrolled` for camps.
+
+## 2026-07-30 - admin-manage function (no migration)
+
+- New `admin-manage` function (`auth: required`,
+  `allow_service_key_impersonation: false`). Admin-only, gated on the admin
+  email allowlist server-side. Actions: `list-accounts` (derived from
+  `students` + `enrollments`; the auth `app_users` table is not reachable
+  from a function), `create-account` (passwordless signup), `add-student` /
+  `update-student` (for any parent by `user_id`), `create-enrollment`
+  (comped: `confirmed`, `total_paid_cents = 0`), `set-credits` (edits
+  `num_classes_enrolled`). No schema change.
