@@ -20,9 +20,10 @@ exists. There is no way for an admin to onboard a family directly:
    `num_classes_enrolled - (bookings with status 'attended')`. There is no
    admin surface to adjust the classes a parent has paid for.
 
-The goal: an admin can create a parent account, create/edit that parent's
-students, create comped enrollments for them, and adjust the credits
-(classes) on any enrollment - all from the admin CMS.
+The goal: an admin can create a parent account (and rename or reversibly
+deactivate it), create/edit that parent's students, create comped enrollments
+for them, and adjust the credits (classes) on any enrollment - all from the
+admin CMS.
 
 ## Decisions (confirmed with the user)
 
@@ -37,6 +38,10 @@ students, create comped enrollments for them, and adjust the credits
 - **New "Accounts" admin section.** A dedicated nav entry: list/create parent
   accounts, drill into one parent to manage their students, enrollments, and
   credits.
+- **Accounts are editable and deactivatable.** Admin can rename an account
+  (`display_name` only - email is the fixed login identity) and reversibly
+  disable it (blocks login, keeps all data, can be reactivated). No permanent
+  account deletion.
 
 ## Scope
 
@@ -52,7 +57,9 @@ Out of scope:
   keep using the browser `adminApi` service key). This feature does **not**
   widen that surface - its sensitive writes go through the new
   admin-authenticated function instead.
-- Editing/deleting parent accounts (auth users) themselves. Only creation.
+- Permanent deletion of parent accounts. Deactivation is reversible; the
+  account and all its data are retained.
+- Changing an account's login email. Only `display_name` is editable.
 - Any parent-facing UI change. `account.js` already renders derived credits
   and comped `confirmed` enrollments correctly with no change.
 - Bookings/session generation. A comped enrollment grants credits; the
@@ -92,7 +99,8 @@ All actions take `{ action, ... }` JSON and return JSON. Non-admin callers
 get `403` before any action runs.
 
 - **`list-accounts`** → `{ accounts: [{ user_id, email, display_name,
-  student_count, enrollment_count }] }`.
+  disabled, student_count, enrollment_count }] }`. `disabled` reflects the
+  auth account's deactivated state (see `set-account-active`).
   Enumerating auth users is the one detail to confirm against Butterbase
   docs during implementation: preferred source is the Butterbase auth-admin
   "list users" endpoint (called with `SERVICE_KEY`). **Fallback if no such
@@ -109,6 +117,18 @@ get `403` before any action runs.
   display_name }`. Duplicate email → `409 { code: "EMAIL_EXISTS" }`, matching
   `guest-enroll`'s existing-email handling. The parent is told to sign in via
   the email-code flow; no password is surfaced.
+
+- **`update-account`** `{ user_id, display_name }` → updates the auth user's
+  `display_name` via the Butterbase auth-admin update-user endpoint
+  (`SERVICE_KEY`). Email is never changed. Returns the updated account.
+
+- **`set-account-active`** `{ user_id, active }` → reversibly disables
+  (`active: false`) or re-enables (`active: true`) the auth account's login
+  via the auth-admin endpoint, keeping all of the parent's data. This action
+  has **no DB fallback** - it strictly requires Butterbase auth-admin support
+  for disabling/enabling a user; if that capability turns out to be
+  unavailable, implementation pauses and flags back rather than shipping a
+  fake toggle.
 
 - **`add-student`** `{ user_id, name, dob, notes }` and
   **`update-student`** `{ id, name, dob, notes }` → create/edit a `students`
@@ -140,13 +160,16 @@ get `403` before any action runs.
 
 - New nav entry `["accounts", "Accounts"]` added to the `nav` array; routed
   in `render()` alongside the existing sections.
-- **List view:** table of parents (Name / Email / # Students / # Enrollments)
-  from `list-accounts`, plus a "+ New account" button opening a small form
-  (email + display name) that calls `create-account`. Errors (including
-  `EMAIL_EXISTS`) surface inline in the form, matching the existing
+- **List view:** table of parents (Name / Email / # Students / # Enrollments
+  / Status) from `list-accounts`, plus a "+ New account" button opening a
+  small form (email + display name) that calls `create-account`. Deactivated
+  accounts are visually marked (e.g. a muted "Disabled" badge). Errors
+  (including `EMAIL_EXISTS`) surface inline in the form, matching the existing
   `#form-error` pattern.
-- **Detail view** (drill into one parent): shows the parent's students and
-  enrollments with inline actions:
+- **Detail view** (drill into one parent): a header with the parent's name and
+  email plus account actions - **Edit name** (`update-account`) and
+  **Deactivate / Reactivate** (`set-account-active`, with a confirm) - then
+  their students and enrollments with inline actions:
   - Add / edit student (name, DOB, notes) → `add-student` / `update-student`.
   - Create comped enrollment: pick one of the parent's students, pick a
     `class_schedules` row (program + day + time, from `adminApi` reads that
@@ -170,6 +193,9 @@ get `403` before any action runs.
 5. **Comped enrollment** → `admin-manage create-enrollment` → `confirmed`
    row with 0 paid → parent sees credits on `account.html`.
 6. **Adjust credits** → `admin-manage set-credits` → credits recompute.
+7. **Rename account** → `admin-manage update-account` → new display name.
+8. **Deactivate / reactivate** → `admin-manage set-account-active` → login
+   blocked/restored; data untouched; the list view reflects the new status.
 
 ## Error handling
 
@@ -183,6 +209,10 @@ get `403` before any action runs.
   owned by `user_id` → `400`; `num_classes_enrolled < 1` → `400`.
 - `set-credits`: unknown enrollment → `404`; `num_classes_enrolled < 0` →
   `400`.
+- `update-account`: empty `display_name` → `400`; unknown `user_id` → `404`.
+- `set-account-active`: unknown `user_id` → `404`; non-boolean `active` →
+  `400`; auth-admin capability unavailable → `502` (and see the hard
+  dependency called out under the action above).
 - Frontend surfaces action errors inline in the relevant form
   (`#form-error`), or via the existing `notify()` banner on success.
 
@@ -202,6 +232,10 @@ runner; pure-logic unit tests, as the suite does for `guest-enroll`,
   `user_id` and an inactive schedule.
 - `set-credits`: updates `num_classes_enrolled`; below-attended reduction is
   allowed and yields the expected derived (possibly negative) balance.
+- `update-account`: renames `display_name`; empty name rejected; email is
+  left untouched.
+- `set-account-active`: toggling `active` flips the reported `disabled` state
+  and leaves the parent's students/enrollments intact.
 - Any extractable frontend helper (e.g. the below-attended warning check)
   gets a small unit test, consistent with the existing `admin-*.test.mjs`
   files.
@@ -211,5 +245,6 @@ runner; pure-logic unit tests, as the suite does for `guest-enroll`,
 `admin-manage.js` is added to `backend/functions/` and deployed via the
 existing `backend/deploy.sh` (needs `BUTTERBASE_API_KEY`). A note is added to
 `backend/schema-notes.md` recording the new function (no schema migration).
-The function needs `SERVICE_KEY` in its environment for the auth-admin list
-call, same as `guest-enroll` already uses `SERVICE_KEY`.
+The function needs `SERVICE_KEY` in its environment for the auth-admin calls
+(list users, update display name, disable/enable login), same as
+`guest-enroll` already uses `SERVICE_KEY`.
