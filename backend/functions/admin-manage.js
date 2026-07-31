@@ -17,6 +17,8 @@ export async function handler(req, ctx) {
   }
 
   switch (body.action) {
+    case "create-account":
+      return createAccount(ctx, body);
     default:
       return json({ error: "Unknown action" }, 400);
   }
@@ -55,4 +57,40 @@ function json(obj, status) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+// Creates a passwordless parent account via the auth signup endpoint. Nobody
+// keeps the random password; the parent signs in later with an email code.
+async function createAccount(ctx, body) {
+  const email = str(body.email)?.toLowerCase();
+  const displayName = str(body.display_name);
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ error: "A valid email is required" }, 400);
+  }
+
+  const apiBase = ctx.env.BUTTERBASE_API_URL || "https://api.butterbase.ai";
+  const appId = ctx.env.BUTTERBASE_APP_ID;
+  const res = await fetch(`${apiBase}/auth/${appId}/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: randomPassword(), display_name: displayName || email }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = String(data.error || data.message || "");
+    if (/already exists|already registered/i.test(msg)) {
+      return json({ error: "An account with this email already exists.", code: "EMAIL_EXISTS" }, 409);
+    }
+    console.error("admin create-account signup failed:", msg);
+    return json({ error: "Could not create the account. Please try again." }, 502);
+  }
+  return json({ account: { user_id: data.user.id, email, name: displayName || email } }, 200);
+}
+
+// Same generator guest-enroll uses: satisfies the uppercase/lower/number/
+// special password policy while remaining unknown to anyone.
+function randomPassword() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const base = btoa(String.fromCharCode(...bytes)).replace(/[+/=]/g, "");
+  return `Aa1!${base}`;
 }
