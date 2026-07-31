@@ -556,10 +556,7 @@ function renderProfileTab() {
 }
 
 async function handleSaveContact() {
-  state.profileSaving = true;
-  state.actionError = "";
-  render();
-  // Read current values from the rendered form (the DOM values were just set by render).
+  // Capture typed values before render() replaces the form with its saved values.
   const form = root.querySelector(".profile-form");
   if (!form) return;
   const body = {};
@@ -567,6 +564,10 @@ async function handleSaveContact() {
     const input = form.querySelector(`[name="${key}"]`);
     body[key] = input ? input.value.trim() : "";
   });
+
+  state.profileSaving = true;
+  state.actionError = "";
+  render();
   try {
     const token = await refreshToken();
     await callFunction("manage-account", { action: "update-contact", ...body }, token);
