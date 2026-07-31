@@ -1073,9 +1073,8 @@ async function accountDetail(userId, email, name) {
       ${table(["Student", "Class", "Status", "Credits", "Actions"], enrollmentRows)}</section>`;
 
   const slot = () => document.querySelector("#form-slot");
-  const attendedFor = (enrollmentId) => 0; // credits = num_classes - attended; admin edits num_classes directly.
 
-  function bindFormEl(onSubmit, buildBody) {
+  function bindFormEl(onSubmit) {
     const formEl = document.querySelector("#record-form");
     const errorEl = formEl.querySelector("#form-error");
     formEl.querySelector('[data-action="cancel-form"]').addEventListener("click", () => accountDetail(userId, email, name));
@@ -1152,7 +1151,7 @@ async function accountDetail(userId, email, name) {
 }
 ```
 
-Note: the `attendedFor` placeholder is intentionally trivial - the admin edits `num_classes_enrolled` directly and the hint explains the derived-credit consequence; we do not fetch bookings here to keep the view one round-trip. (The `below`/negative wording in the hint satisfies the warning requirement.)
+Note: the credit editor deliberately edits `num_classes_enrolled` directly and the hint explains the derived-credit consequence (credits = classes minus attended); we do not fetch bookings here, keeping the view to one round-trip. The `below`/negative wording in the hint satisfies the warning requirement.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
