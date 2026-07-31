@@ -98,7 +98,7 @@ test("homepage anchors clear the sticky navigation", async () => {
 test("homepage promotes the July summer schedule", async () => {
   const index = await read("index.html");
   assert.match(index, /<p>Book now for limited spots available in July<\/p>/);
-  assert.match(index, /<a class="btn" href="schedule\.html">Summer Class Schedule<\/a>/);
+  assert.match(index, /<a class="btn" href="schedule\.html(\?[^"]*)?">Summer Class Schedule<\/a>/);
   assert.doesNotMatch(index, /Reach out to learn more or ask about enrolling your child\./);
 });
 
