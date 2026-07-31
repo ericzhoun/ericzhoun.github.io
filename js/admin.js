@@ -445,7 +445,7 @@ async function accountDetail(userId, email, name) {
     adminApi("programs?order=sort_order.asc"),
   ]);
   const programName = (id) => programs.find((p) => p.id === id)?.name || "-";
-  const scheduleLabel = (s) => `${programName(s.program_id)} - ${s.day_of_week} ${formatTime(s.start_time)} (${esc(s.age_group)})`;
+  const scheduleLabel = (s) => `${programName(s.program_id)} - ${s.day_of_week} ${formatTime(s.start_time)} (${s.age_group})`;
   const studentRows = students.map((s) => `<tr>
     <td>${esc(s.name)}</td><td>${esc(s.age ?? "-")}</td><td>${esc(s.dob ?? "-")}</td>
     <td>${button("Edit", `edit-student:${esc(s.id)}`)}</td></tr>`).join("");
