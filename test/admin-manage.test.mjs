@@ -180,3 +180,21 @@ test("set-credits rejects a negative value", async () => {
   const res = await handler(req, ctx);
   assert.equal(res.status, 400);
 });
+
+test("list-accounts returns derived parents with numeric counts", async () => {
+  const { req, ctx } = requestWithDb(
+    { action: "list-accounts" },
+    [[
+      { user_id: "p1", email: "a@e.com", name: "Alice", student_count: "2", enrollment_count: "3" },
+      { user_id: "p2", email: "b@e.com", name: "Bob", student_count: "1", enrollment_count: "0" },
+    ]],
+  );
+  const res = await handler(req, ctx);
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.accounts.length, 2);
+  assert.deepEqual(data.accounts[0], {
+    user_id: "p1", email: "a@e.com", name: "Alice", student_count: 2, enrollment_count: 3,
+  });
+  assert.equal(data.accounts[1].enrollment_count, 0);
+});

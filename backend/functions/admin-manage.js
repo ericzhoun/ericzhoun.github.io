@@ -27,6 +27,8 @@ export async function handler(req, ctx) {
       return createEnrollment(ctx, body);
     case "set-credits":
       return setCredits(ctx, body);
+    case "list-accounts":
+      return listAccounts(ctx);
     default:
       return json({ error: "Unknown action" }, 400);
   }
@@ -214,6 +216,42 @@ async function setCredits(ctx, body) {
   );
   if (res.rows.length === 0) return json({ error: "Enrollment not found" }, 404);
   return json({ enrollment: res.rows[0] }, 200);
+}
+
+// Derives the parent list from app tables, since the auth app_users table is
+// not reachable from a function. Email/name come from the parent's enrollment
+// rows (the account email is stored as student_email); a parent with only
+// students and no enrollments still appears, with null email/name.
+async function listAccounts(ctx) {
+  const res = await ctx.db.query(
+    `SELECT ids.user_id,
+            e.email,
+            e.parent_name AS name,
+            COALESCE(s.cnt, 0) AS student_count,
+            COALESCE(e.cnt, 0) AS enrollment_count
+     FROM (
+       SELECT user_id FROM students WHERE user_id IS NOT NULL
+       UNION
+       SELECT user_id FROM enrollments WHERE user_id IS NOT NULL
+     ) ids
+     LEFT JOIN (
+       SELECT user_id, COUNT(*) AS cnt,
+              MAX(student_email) AS email, MAX(parent_name) AS parent_name
+       FROM enrollments WHERE user_id IS NOT NULL GROUP BY user_id
+     ) e ON e.user_id = ids.user_id
+     LEFT JOIN (
+       SELECT user_id, COUNT(*) AS cnt FROM students WHERE user_id IS NOT NULL GROUP BY user_id
+     ) s ON s.user_id = ids.user_id
+     ORDER BY name NULLS LAST`,
+  );
+  const accounts = res.rows.map((r) => ({
+    user_id: r.user_id,
+    email: r.email ?? null,
+    name: r.name ?? null,
+    student_count: Number(r.student_count) || 0,
+    enrollment_count: Number(r.enrollment_count) || 0,
+  }));
+  return json({ accounts }, 200);
 }
 
 // Copied verbatim from manage-students.js (functions are single-file, so the
