@@ -30,6 +30,7 @@ const state = {
   showMakeup: {}, // { [enrollmentId]: { loading, sessions: [] } | false }
   // profile section state
   profileSaving: false,
+  contactDraft: null,
   // change-password UI state
   pwStep: "idle", // "idle" | "code-sent" | "confirming"
   pwLoading: false,
@@ -468,10 +469,10 @@ function renderProfileTab() {
   const form = el("div", "profile-form");
 
   const fields = [
-    { key: "parent_name", label: "Parent / Guardian Name", value: en.parent_name || "" },
-    { key: "student_phone", label: "Phone", value: en.student_phone || "" },
-    { key: "emergency_contact", label: "Emergency Contact", value: en.emergency_contact || "" },
-    { key: "allergies", label: "Allergies / Notes", value: en.allergies || "" },
+    { key: "parent_name", label: "Parent / Guardian Name", value: (state.contactDraft?.parent_name ?? en.parent_name) || "" },
+    { key: "student_phone", label: "Phone", value: (state.contactDraft?.student_phone ?? en.student_phone) || "" },
+    { key: "emergency_contact", label: "Emergency Contact", value: (state.contactDraft?.emergency_contact ?? en.emergency_contact) || "" },
+    { key: "allergies", label: "Allergies / Notes", value: (state.contactDraft?.allergies ?? en.allergies) || "" },
   ];
   fields.forEach((f) => {
     const label = el("label", "", f.label);
@@ -484,6 +485,9 @@ function renderProfileTab() {
     }
     input.name = f.key;
     input.value = f.value;
+    input.oninput = (event) => {
+      state.contactDraft = { ...(state.contactDraft || {}), [f.key]: event.target.value };
+    };
     if (state.profileSaving) input.disabled = true;
     label.appendChild(input);
     form.appendChild(label);
@@ -559,10 +563,10 @@ async function handleSaveContact() {
   // Capture typed values before render() replaces the form with its saved values.
   const form = root.querySelector(".profile-form");
   if (!form) return;
-  const body = {};
+  const body = { ...(state.contactDraft || {}) };
   ["parent_name", "student_phone", "emergency_contact", "allergies"].forEach((key) => {
     const input = form.querySelector(`[name="${key}"]`);
-    body[key] = input ? input.value.trim() : "";
+    if (!(key in body)) body[key] = input ? input.value.trim() : "";
   });
 
   state.profileSaving = true;

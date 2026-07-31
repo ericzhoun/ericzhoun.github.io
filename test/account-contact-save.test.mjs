@@ -18,4 +18,7 @@ test("saving contact information captures edited values before rendering the sav
     captureIndex < renderIndex,
     "save handler must capture typed contact values before re-rendering replaces the form"
   );
+  assert.match(script, /contactDraft: null/);
+  assert.match(script, /state\.contactDraft = \{ \.\.\.\(state\.contactDraft \|\| \{\}\), \[f\.key\]: event\.target\.value \}/);
+  assert.match(saveHandler, /const body = \{ \.\.\.\(state\.contactDraft \|\| \{\}\) \}/);
 });
