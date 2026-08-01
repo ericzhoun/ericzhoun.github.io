@@ -9,6 +9,7 @@ Implementation commits:
 - `d4f2fee` (`fix: harden parent account management`)
 - `f1ff2c9` (`fix: make admin account recovery durable`)
 - `95fde13` (`fix: secure function deployment payloads`)
+- `09abc60` (`fix: reject unknown deploy selections`)
 
 ## Safety boundary
 
@@ -158,18 +159,28 @@ Green evidence: `test/login-flow.test.mjs` passes 6 of 6.
   `admin-manage` is selected and the GitHub token only when
   `trigger-schedule-bake` is selected. The Butterbase API key remains mandatory
   for every deployment because it authenticates the deploy request itself.
+- Every supplied function selection is validated against the configured
+  function list before selection-specific secret checks, temporary payload
+  creation, or network access. Any unknown value, including one mixed with a
+  valid selection, produces a non-secret diagnostic and exits with status 1.
+  Argument-bearing invocations must match at least one configuration.
 
 Red evidence: the expanded shell integration test first failed because all
 function payloads contained broad sensitive environment entries. Reordered
 lifecycle assertions then failed because every function reused the fixed `/tmp`
-payload instead of a validated private temporary file.
+payload instead of a validated private temporary file. The final selection tests
+then showed that all-unknown input exited successfully after creating a temporary
+payload, while mixed valid and unknown input also called curl and generated a
+deployment payload.
 
 Green evidence: `test/deploy.test.sh` intercepts the real script for all 13
 configured functions and passes. It proves the exact environment map, 0600 mode,
 unique paths between runs, cleanup after success and simulated curl failure,
 rejection without deletion of an invalid `mktemp` result, selection-aware
 fail-fast behavior, and absence of fixture authorization material from curl
-arguments and failure logs.
+arguments and failure logs. The suite also instruments both `mktemp` and curl for
+all-unknown and mixed valid/unknown selections, proving that rejection occurs
+with no temporary payload creation, captured payload, or network attempt.
 
 ## Final verification
 
@@ -178,7 +189,7 @@ All commands were run from the isolated feature worktree after the fixes:
 | Check | Result |
 | --- | --- |
 | `node --test` | 203 passed, 0 failed |
-| `bash test/deploy.test.sh` | all 13 payload scopes, private temp lifecycle, failure cleanup, and fail-fast checks passed |
+| `bash test/deploy.test.sh` | all 13 payload scopes, private temp lifecycle, failure cleanup, selection validation, and fail-fast checks passed |
 | `bash -n backend/deploy.sh test/deploy.test.sh` | passed |
 | `node --check` for browser, deployed function, archived function, and browser verifier JavaScript | passed |
 | `git diff --check` | passed |
