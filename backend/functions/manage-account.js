@@ -15,11 +15,11 @@ export async function handler(req, ctx) {
   const apiBase = ctx.env.BUTTERBASE_API_URL || "https://api.butterbase.ai";
   const appId = ctx.env.BUTTERBASE_APP_ID;
 
-  if (action === "update-contact") {
-    return updateContact(ctx, body);
-  }
   const me = await currentUser(req, ctx, apiBase, appId);
   if (!me) return json({ error: "Could not verify identity" }, 403);
+  if (action === "update-contact") {
+    return updateContact(ctx, me, body);
+  }
   if (action === "change-password-init") {
     return changePasswordInit(me.email, apiBase, appId);
   }
@@ -29,32 +29,44 @@ export async function handler(req, ctx) {
   return json({ error: "Unknown action" }, 400);
 }
 
-// Updates editable contact fields across all of the caller's enrollments.
-// RLS ensures only enrollments owned by ctx.user.id are touched.
-async function updateContact(ctx, body) {
-  const fields = {};
-  const parentName = str(body.parent_name);
+// Persists the caller's durable profile and keeps legacy enrollment contact
+// columns in sync. The CTE makes both changes in one database statement.
+async function updateContact(ctx, me, body) {
+  const parentName = str(body.parent_name) || str(me.display_name) || str(me.email);
   const phone = str(body.student_phone);
   const emergency = str(body.emergency_contact);
   const allergies = str(body.allergies);
 
-  if (parentName !== null) fields.parent_name = parentName;
-  if (phone !== null) fields.student_phone = phone;
-  if (emergency !== null) fields.emergency_contact = emergency;
-  if (allergies !== null) fields.allergies = allergies;
-
-  const keys = Object.keys(fields);
-  if (keys.length === 0) return json({ error: "No fields to update" }, 400);
-
-  const sets = keys.map((k, i) => `${k} = $${i + 1}`).join(", ");
-  const values = keys.map((k) => fields[k]);
-  values.push(ctx.user.id);
+  if (!parentName) return json({ error: "Parent name is required" }, 400);
 
   const res = await ctx.db.query(
-    `UPDATE enrollments SET ${sets} WHERE user_id = $${values.length}`,
-    values
+    `WITH saved_profile AS (
+      INSERT INTO parent_profiles
+        (user_id, email, parent_name, student_phone, emergency_contact, allergies, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, now())
+      ON CONFLICT (user_id) DO UPDATE SET
+        email = EXCLUDED.email,
+        parent_name = EXCLUDED.parent_name,
+        student_phone = EXCLUDED.student_phone,
+        emergency_contact = EXCLUDED.emergency_contact,
+        allergies = EXCLUDED.allergies,
+        updated_at = now()
+      RETURNING *
+    ), updated_enrollments AS (
+      UPDATE enrollments SET
+        parent_name = $3,
+        student_phone = $4,
+        emergency_contact = $5,
+        allergies = $6
+      WHERE user_id = $1
+      RETURNING id
+    )
+    SELECT saved_profile.*, (SELECT count(*)::int FROM updated_enrollments) AS updated_enrollments
+    FROM saved_profile`,
+    [ctx.user.id, me.email, parentName, phone, emergency, allergies]
   );
-  return json({ updated: res.rowCount || 0 }, 200);
+  const { updated_enrollments: updatedEnrollments, ...profile } = res.rows[0];
+  return json({ profile, updated_enrollments: updatedEnrollments }, 200);
 }
 
 // Triggers a forgot-password email for the caller's own email.
