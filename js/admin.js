@@ -1,5 +1,6 @@
 import { adminApi, callFunction, formatPrice, formatTime, planCampBundleSync } from "./api.js";
 import { getOnboardingDeliveryMessage } from "./admin-account-messages.js";
+import { createLatestEventListener } from "./admin-account-view-listener.js";
 import { getToken, getUser, isAdmin, logout, refreshToken } from "./auth.js";
 
 const nav = [
@@ -8,6 +9,7 @@ const nav = [
   ["students", "Students"], ["accounts", "Accounts"],
 ];
 const app = document.querySelector("#admin-app");
+const accountViewClick = createLatestEventListener();
 let notification = "";
 const esc = (v = "") => String(v).replace(/[&<>\"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;" }[c]));
 const date = (v) => v ? new Date(v).toLocaleDateString() : "-";
@@ -402,7 +404,7 @@ async function accounts() {
   app.innerHTML = `<div class="admin-crud-header"><h1>Accounts</h1>${button("+ New account", "new-account")}</div>
     <div id="form-slot"></div>
     ${table(["Parent", "Email", "Students", "Enrollments", "Actions"], rows)}`;
-  app.addEventListener("click", async (event) => {
+  accountViewClick.listen(app, "click", async (event) => {
     const action = event.target.dataset.action || "";
     if (action === "new-account") { renderNewAccountForm(); return; }
     if (action.startsWith("account:")) {
@@ -410,7 +412,7 @@ async function accounts() {
       const account = list.find((a) => a.user_id === userId);
       if (account) await accountDetail(account.user_id, account.email, account.name);
     }
-  }, { once: true });
+  });
 }
 
 function renderNewAccountForm() {
@@ -502,7 +504,7 @@ async function accountDetail(userId, email, name) {
     });
   }
 
-  app.addEventListener("click", async (event) => {
+  accountViewClick.listen(app, "click", async (event) => {
     const action = event.target.dataset.action || "";
     if (action === "back-to-accounts") { await accounts(); return; }
     if (action === "resend-onboarding") {
@@ -573,8 +575,8 @@ async function accountDetail(userId, email, name) {
       });
       return;
     }
-  }, { once: true });
+  });
 }
 
-async function render() { if (!guard()) return; renderNav(); try { const id = query(); if (id === "dashboard") await dashboard(); else if (configs[id]) await crud(id); else if (id === "enrollments") await enrollments(); else if (id === "students") await students(); else if (id === "sessions") await sessions(); else if (id === "accounts") await accounts(); else app.innerHTML = `<h1>${id[0].toUpperCase() + id.slice(1)}</h1><p class="muted">Section unavailable.</p>`; renderNotification(); } catch (err) { app.innerHTML = `<p class="auth-error">${esc(err.message)}</p>`; } }
+async function render() { accountViewClick.clear(); if (!guard()) return; renderNav(); try { const id = query(); if (id === "dashboard") await dashboard(); else if (configs[id]) await crud(id); else if (id === "enrollments") await enrollments(); else if (id === "students") await students(); else if (id === "sessions") await sessions(); else if (id === "accounts") await accounts(); else app.innerHTML = `<h1>${id[0].toUpperCase() + id.slice(1)}</h1><p class="muted">Section unavailable.</p>`; renderNotification(); } catch (err) { app.innerHTML = `<p class="auth-error">${esc(err.message)}</p>`; } }
 window.addEventListener("hashchange", render); document.querySelector("#admin-logout").addEventListener("click", async () => { await logout(); location.href = "index.html"; }); render();
