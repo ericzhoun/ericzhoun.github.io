@@ -11,6 +11,10 @@ export function getInitialLoginState(search) {
   };
 }
 
+export function getLoginFocusTarget(mode) {
+  return mode === "magic-verify" ? "code" : null;
+}
+
 export function safeNextPath(candidate, fallback) {
   if (typeof candidate !== "string" || candidate.startsWith("//")) return fallback;
 

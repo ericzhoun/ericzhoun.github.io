@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { getInitialLoginState, safeNextPath } from "../js/login-flow.js";
+import { getInitialLoginState, getLoginFocusTarget, safeNextPath } from "../js/login-flow.js";
 
 test("welcome links open code verification with a normalized prefilled email", () => {
   assert.deepEqual(
@@ -15,6 +15,10 @@ test("unknown modes fall back to password login", () => {
     mode: "password",
     email: "x@e.com",
   });
+});
+
+test("welcome verification directs keyboard focus to the sign-in code", () => {
+  assert.equal(getLoginFocusTarget("magic-verify"), "code");
 });
 
 test("safeNextPath allows only same-site relative destinations", () => {

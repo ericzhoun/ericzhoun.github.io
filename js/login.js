@@ -3,7 +3,7 @@
 // account (guest-checkout recovery path).
 import { login, isLoggedIn, sendMagicLink, verifyMagicLink, claimEnrollments } from "./auth.js";
 import { getQueryParam } from "./api.js";
-import { getInitialLoginState, safeNextPath } from "./login-flow.js";
+import { getInitialLoginState, getLoginFocusTarget, safeNextPath } from "./login-flow.js";
 
 const errEl = document.getElementById("auth-error");
 const infoEl = document.getElementById("auth-info");
@@ -34,6 +34,7 @@ function setMode(next) {
     mode === "magic-send" ? "Email Me a Code" : "Verify & Log In";
   modeToggle.textContent =
     mode === "password" ? "Email me a sign-in code instead" : "Use a password instead";
+  if (getLoginFocusTarget(mode) === "code") codeInput.focus();
 }
 
 function currentEmail() {
