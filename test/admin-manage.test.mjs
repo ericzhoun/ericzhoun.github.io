@@ -169,7 +169,13 @@ test("create-account persists the profile before sending the branded welcome ema
   assert.equal(welcome.body.params.subject, "Your OliVista Art Studio account");
   assert.match(welcome.body.params.body, /admin of OliVista Art Studio has created an account for you/);
   assert.match(welcome.body.params.body, /separate security email/);
-  assert.match(welcome.body.params.body, /login\.html\?mode=magic-verify&email=new%40example\.com/);
+  const welcomeUrl = welcome.body.params.body
+    .split("\n")
+    .find((line) => line.startsWith("https://olivistart.test/"));
+  assert.equal(
+    welcomeUrl,
+    "https://olivistart.test/login.html?mode=magic-verify&email=new%40example.com&next=account.html",
+  );
 });
 
 test("create-account returns the durable account when welcome delivery fails", async () => {

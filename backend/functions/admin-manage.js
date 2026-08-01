@@ -152,13 +152,14 @@ async function createAccount(ctx, body) {
 }
 
 export async function sendWelcomeEmail(ctx, { email, parentName }) {
-  const loginUrl = `${ctx.env.SITE_URL || "https://olivistart.com"}/login.html?mode=magic-verify&email=${encodeURIComponent(email)}`;
+  const loginUrl = new URL("/login.html", ctx.env.SITE_URL || "https://olivistart.com");
+  loginUrl.search = new URLSearchParams({ mode: "magic-verify", email, next: "account.html" });
   const body = [
     `Hello${parentName ? ` ${parentName}` : ""},`,
     "",
     "The admin of OliVista Art Studio has created an account for you. Butterbase has sent a separate security email containing your sign-in code. Please use that code to log in:",
     "",
-    loginUrl,
+    loginUrl.toString(),
     "",
     "Sign-in codes expire after 15 minutes and can be used only once. If your code has expired, request a new one from the login page.",
     "",
