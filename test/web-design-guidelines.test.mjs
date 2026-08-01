@@ -4,6 +4,34 @@ import { test } from "node:test";
 
 const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
 
+test("every page declares the shared favicon", async () => {
+  const pages = [
+    "about.html",
+    "account.html",
+    "admin.html",
+    "checkout-success.html",
+    "contact.html",
+    "enroll.html",
+    "index.html",
+    "login.html",
+    "portfolio.html",
+    "qr-code.html",
+    "registration.html",
+    "schedule.html",
+    "signup.html",
+  ];
+
+  for (const page of pages) {
+    assert.match(
+      await read(page),
+      /<link rel="icon" type="image\/svg\+xml" href="assets\/favicon\.svg">/,
+      `${page} should prevent the browser's missing /favicon.ico fallback`,
+    );
+  }
+
+  assert.match(await read("assets/favicon.svg"), /^<svg[^>]*aria-hidden="true"/);
+});
+
 test("public pages expose a skip link and main-content target", async () => {
   const pages = ["index.html", "schedule.html", "about.html", "contact.html", "portfolio.html"];
 
