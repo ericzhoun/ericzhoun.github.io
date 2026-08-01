@@ -1,5 +1,5 @@
 import { adminApi, callFunction, formatPrice, formatTime, planCampBundleSync } from "./api.js";
-import { getOnboardingDeliveryMessage } from "./admin-account-messages.js";
+import { getOnboardingDeliveryMessage, replaceAdminNotice } from "./admin-account-messages.js";
 import { createLatestEventListener } from "./admin-account-view-listener.js";
 import { getToken, getUser, isAdmin, logout, refreshToken } from "./auth.js";
 
@@ -26,7 +26,7 @@ const adminFn = async (action, body = {}) =>
 function notify(message) { notification = message; }
 function renderNotification() {
   if (!notification) return;
-  app.insertAdjacentHTML("afterbegin", `<p class="admin-notice" role="status">✓ ${esc(notification)}</p>`);
+  replaceAdminNotice(app, `<p class="admin-notice" role="status">✓ ${esc(notification)}</p>`);
   notification = "";
 }
 
