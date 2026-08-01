@@ -136,7 +136,43 @@ async function createAccount(ctx, body) {
     console.error("admin create-account signup failed:", message);
     return json({ error: "Could not create the account. Please try again." }, 502);
   }
-  return json({ account: { user_id: result.user.id, email, name: displayName || email } }, 200);
+
+  const parentName = displayName || email;
+  await data(ctx, "parent_profiles", {
+    method: "POST",
+    body: { user_id: result.user.id, email, parent_name: parentName },
+  });
+  const welcomeSent = await sendWelcomeEmail(ctx, { email, parentName });
+  return json({
+    account: { user_id: result.user.id, email, name: parentName },
+    welcome_sent: welcomeSent,
+  }, 200);
+}
+
+export async function sendWelcomeEmail(ctx, { email, parentName }) {
+  const loginUrl = `${ctx.env.SITE_URL || "https://olivistart.com"}/login.html?mode=magic-verify&email=${encodeURIComponent(email)}`;
+  const body = [
+    `Hello${parentName ? ` ${parentName}` : ""},`,
+    "",
+    "The admin of OliVista Art Studio has created an account for you. Butterbase has sent a separate security email containing your sign-in code. Please use that code to log in:",
+    "",
+    loginUrl,
+    "",
+    "Sign-in codes expire after 15 minutes and can be used only once. If your code has expired, request a new one from the login page.",
+    "",
+    "If you did not expect these emails, please contact OliVista Art Studio.",
+  ].join("\n");
+  const res = await fetch(`${apiBase(ctx)}/v1/${ctx.env.BUTTERBASE_APP_ID}/integrations/execute`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ctx.env.SERVICE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      toolName: "GMAIL_SEND_EMAIL",
+      userId: ctx.env.INVITATION_GMAIL_USER_ID,
+      params: { to: email, subject: "Your OliVista Art Studio account", body },
+    }),
+  });
+  const result = await res.json().catch(() => ({}));
+  return res.ok && result.successful === true;
 }
 
 // Same generator guest-enroll uses: satisfies the uppercase/lower/number/

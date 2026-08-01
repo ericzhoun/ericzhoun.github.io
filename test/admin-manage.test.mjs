@@ -27,6 +27,8 @@ function request(body, { token = "admin-jwt" } = {}) {
         BUTTERBASE_APP_ID: "app_test",
         BUTTERBASE_API_URL: "https://api.test",
         SERVICE_KEY: "bb_sk_test",
+        INVITATION_GMAIL_USER_ID: "sender-user-1",
+        SITE_URL: "https://olivistart.test",
       },
     },
   };
@@ -138,6 +140,51 @@ test("create-account returns the new account on success", async () => {
   assert.equal(res.status, 200);
   const data = await res.json();
   assert.deepEqual(data.account, { user_id: "user-9", email: "new@example.com", name: "New Parent" });
+});
+
+test("create-account persists the profile before sending the branded welcome email", async () => {
+  const res = await callHandler(
+    request({ action: "create-account", email: "New@Example.com ", display_name: "New Parent" }),
+    {
+      respond: (url) => {
+        if (url.includes("/signup")) return { body: { user: { id: "user-9" } } };
+        if (url.includes("/integrations/execute")) return { body: { successful: true } };
+        return { body: { user_id: "user-9" } };
+      },
+    },
+  );
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.welcome_sent, true);
+  const profile = res.calls.find((call) => call.url.endsWith("/parent_profiles"));
+  const welcome = res.calls.find((call) => call.url.endsWith("/integrations/execute"));
+  assert.ok(res.calls.indexOf(profile) < res.calls.indexOf(welcome));
+  assert.deepEqual(profile.body, {
+    user_id: "user-9", email: "new@example.com", parent_name: "New Parent",
+  });
+  assert.equal(welcome.body.toolName, "GMAIL_SEND_EMAIL");
+  assert.equal(welcome.body.userId, "sender-user-1");
+  assert.equal(welcome.body.params.to, "new@example.com");
+  assert.equal(welcome.body.params.subject, "Your OliVista Art Studio account");
+  assert.match(welcome.body.params.body, /admin of OliVista Art Studio has created an account for you/);
+  assert.match(welcome.body.params.body, /separate security email/);
+  assert.match(welcome.body.params.body, /login\.html\?mode=magic-verify&email=new%40example\.com/);
+});
+
+test("create-account returns the durable account when welcome delivery fails", async () => {
+  const res = await callHandler(request({
+    action: "create-account", email: "parent@example.com", display_name: "Parent",
+  }), {
+    respond: (url) => {
+      if (url.includes("/signup")) return { body: { user: { id: "parent-1" } } };
+      if (url.includes("/integrations/execute")) return { ok: false, status: 502, body: { error: "gmail down" } };
+      return { body: { user_id: "parent-1" } };
+    },
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).welcome_sent, false);
+  assert.ok(res.calls.some((call) => call.url.endsWith("/parent_profiles")));
 });
 
 test("create-account maps a duplicate email to EMAIL_EXISTS 409", async () => {
