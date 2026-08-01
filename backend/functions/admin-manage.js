@@ -40,6 +40,8 @@ export async function handler(req, ctx) {
         return await setCredits(ctx, body);
       case "list-accounts":
         return await listAccounts(ctx);
+      case "resend-invitation":
+        return await resendInvitation(ctx, body);
       default:
         return json({ error: "Unknown action" }, 400);
     }
@@ -175,6 +177,34 @@ export async function sendWelcomeEmail(ctx, { email, parentName }) {
   return res.ok && result.successful === true;
 }
 
+// Resends the two onboarding messages from the authoritative stored profile.
+// The client-supplied email is intentionally ignored so an admin browser
+// cannot redirect account messages to an unrelated address.
+async function resendInvitation(ctx, body) {
+  const userId = str(body.user_id);
+  if (!userId) return json({ error: "Parent account id is required" }, 400);
+
+  const profile = rows(await data(
+    ctx,
+    `parent_profiles?user_id=eq.${encodeURIComponent(userId)}&select=email,parent_name`,
+  ))[0];
+  const email = profile && str(profile.email);
+  if (!email) return json({ error: "Parent profile not found" }, 404);
+
+  const [magicLink, welcome] = await Promise.allSettled([
+    fetch(`${apiBase(ctx)}/auth/${ctx.env.BUTTERBASE_APP_ID}/magic-link`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    }),
+    sendWelcomeEmail(ctx, { email, parentName: str(profile.parent_name) || email }),
+  ]);
+  return json({
+    code_sent: magicLink.status === "fulfilled" && magicLink.value.ok,
+    welcome_sent: welcome.status === "fulfilled" && welcome.value === true,
+  }, 200);
+}
+
 // Same generator guest-enroll uses: satisfies the uppercase/lower/number/
 // special password policy while remaining unknown to anyone.
 function randomPassword() {
@@ -296,11 +326,12 @@ async function setCredits(ctx, body) {
 }
 
 // Derives the parent list from app tables, since the auth app_users table is
-// not reachable from a function. Email and name come from the parent's
-// enrollment rows (the account email is stored as student_email); a parent
-// with only students and no enrollments still appears, with null email/name.
+// not reachable from a function. parent_profiles is authoritative for contact
+// details and also represents accounts with no activity yet. Enrollment rows
+// remain the fallback for legacy accounts created before profiles existed.
 async function listAccounts(ctx) {
-  const [studentRows, enrollmentRows] = await Promise.all([
+  const [profileRows, studentRows, enrollmentRows] = await Promise.all([
+    data(ctx, "parent_profiles?select=user_id,email,parent_name"),
     data(ctx, "students?select=user_id"),
     // Newest rows carry the most recently saved contact information. Keep the
     // ordering explicit because the REST API does not guarantee row order.
@@ -315,6 +346,12 @@ async function listAccounts(ctx) {
     return accounts.get(userId);
   };
 
+  for (const row of rows(profileRows)) {
+    if (!row.user_id) continue;
+    const account = entry(row.user_id);
+    account.email = str(row.email);
+    account.name = str(row.parent_name);
+  }
   for (const row of rows(studentRows)) {
     if (!row.user_id) continue;
     entry(row.user_id).student_count += 1;
@@ -323,8 +360,8 @@ async function listAccounts(ctx) {
     if (!row.user_id) continue;
     const account = entry(row.user_id);
     account.enrollment_count += 1;
-    account.email = account.email || row.student_email || null;
-    account.name = account.name || row.parent_name || null;
+    if (account.email === null) account.email = str(row.student_email);
+    if (account.name === null) account.name = str(row.parent_name);
   }
 
   const list = [...accounts.values()].sort((a, b) => (a.name || "￿").localeCompare(b.name || "￿"));

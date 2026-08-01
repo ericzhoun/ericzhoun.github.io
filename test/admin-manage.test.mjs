@@ -337,11 +337,68 @@ test("set-credits rejects an invalid status", async () => {
   assert.equal(res.status, 400);
 });
 
+// ---- resend onboarding ----
+
+test("resend-invitation uses the stored profile email for both messages", async () => {
+  const res = await callHandler(request({
+    action: "resend-invitation", user_id: "parent-7", email: "attacker@example.com",
+  }), {
+    respond: (url) => {
+      if (url.includes("parent_profiles?")) return { body: [{ email: "real@example.com", parent_name: "Real Parent" }] };
+      if (url.includes("/magic-link")) return { body: { message: "sent" } };
+      if (url.includes("/integrations/execute")) return { body: { successful: true } };
+      return { body: [] };
+    },
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { code_sent: true, welcome_sent: true });
+  const magic = res.calls.find((call) => call.url.endsWith("/magic-link"));
+  const gmail = res.calls.find((call) => call.url.endsWith("/integrations/execute"));
+  assert.equal(magic.body.email, "real@example.com");
+  assert.equal(gmail.body.params.to, "real@example.com");
+});
+
+test("resend-invitation reports each independent delivery outcome", async () => {
+  const cases = [
+    { name: "magic success and welcome failure", magic: { body: { message: "sent" } }, gmail: { body: { successful: false } }, want: { code_sent: true, welcome_sent: false } },
+    { name: "magic failure and welcome success", magic: { ok: false, status: 502, body: { error: "unavailable" } }, gmail: { body: { successful: true } }, want: { code_sent: false, welcome_sent: true } },
+    { name: "both deliveries fail", magic: { ok: false, status: 502, body: { error: "unavailable" } }, gmail: { body: { successful: false } }, want: { code_sent: false, welcome_sent: false } },
+  ];
+
+  for (const scenario of cases) {
+    const res = await callHandler(request({ action: "resend-invitation", user_id: "parent-7" }), {
+      respond: (url) => {
+        if (url.includes("parent_profiles?")) return { body: [{ email: "real@example.com", parent_name: "Real Parent" }] };
+        if (url.includes("/magic-link")) return scenario.magic;
+        if (url.includes("/integrations/execute")) return scenario.gmail;
+        return { body: [] };
+      },
+    });
+    assert.equal(res.status, 200, scenario.name);
+    assert.deepEqual(await res.json(), scenario.want, scenario.name);
+  }
+});
+
+test("resend-invitation returns 404 when the parent profile is absent", async () => {
+  const res = await callHandler(request({ action: "resend-invitation", user_id: "parent-7" }), {
+    respond: () => ({ body: [] }),
+  });
+  assert.equal(res.status, 404);
+  assert.equal(res.calls.some((call) => call.url.endsWith("/magic-link")), false);
+  assert.equal(res.calls.some((call) => call.url.endsWith("/integrations/execute")), false);
+});
+
 // ---- accounts listing ----
 
 test("list-accounts aggregates parents across students and enrollments", async () => {
   const res = await callHandler(request({ action: "list-accounts" }), {
     respond: (url) => {
+      if (url.includes("parent_profiles?")) {
+        return { body: [
+          { user_id: "p1", email: "profile@e.com", parent_name: "Profile Alice" },
+          { user_id: "p4", email: "fresh@e.com", parent_name: "Fresh Parent" },
+        ] };
+      }
       if (url.includes("students?")) {
         return { body: [{ user_id: "p1" }, { user_id: "p1" }, { user_id: "p2" }] };
       }
@@ -361,7 +418,7 @@ test("list-accounts aggregates parents across students and enrollments", async (
 
   // p1 has both students and enrollments
   assert.deepEqual(byId.p1, {
-    user_id: "p1", email: "a@e.com", name: "Updated Alice", student_count: 2, enrollment_count: 2,
+    user_id: "p1", email: "profile@e.com", name: "Profile Alice", student_count: 2, enrollment_count: 2,
   });
   // p2 has only students - still listed, with no email or name to show
   assert.deepEqual(byId.p2, {
@@ -370,6 +427,10 @@ test("list-accounts aggregates parents across students and enrollments", async (
   // p3 has only enrollments
   assert.deepEqual(byId.p3, {
     user_id: "p3", email: "c@e.com", name: "Cara", student_count: 0, enrollment_count: 1,
+  });
+  // p4 has an account profile but has not added students or enrolled yet.
+  assert.deepEqual(byId.p4, {
+    user_id: "p4", email: "fresh@e.com", name: "Fresh Parent", student_count: 0, enrollment_count: 0,
   });
 });
 
