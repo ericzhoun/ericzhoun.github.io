@@ -1762,6 +1762,36 @@ textarea {
   cursor: pointer;
 }
 
+.auth-link-button {
+  align-self: center;
+  appearance: none;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--color-visual-discovery);
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  padding: 0.25rem 0.5rem;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+
+.auth-link-button:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.auth-link-button:focus-visible {
+  outline: 3px solid var(--color-visual-discovery);
+  outline-offset: 2px;
+}
+
+.auth-link-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .auth-error {
   background: #fdf0ee;
   border: 1px solid #c0392b;
