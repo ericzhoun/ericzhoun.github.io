@@ -3,6 +3,7 @@
 // account (guest-checkout recovery path).
 import { login, isLoggedIn, sendMagicLink, verifyMagicLink, claimEnrollments } from "./auth.js";
 import { getQueryParam } from "./api.js";
+import { getInitialLoginState, safeNextPath } from "./login-flow.js";
 
 const errEl = document.getElementById("auth-error");
 const infoEl = document.getElementById("auth-info");
@@ -13,6 +14,8 @@ const codeField = document.getElementById("code-field");
 const codeInput = document.getElementById("code");
 const submitBtn = document.getElementById("login-submit");
 const modeToggle = document.getElementById("mode-toggle");
+const resendCode = document.getElementById("resend-code");
+const emailInput = document.getElementById("email");
 
 // mode: "password" | "magic-send" | "magic-verify"
 let mode = "password";
@@ -25,11 +28,16 @@ function setMode(next) {
   passwordInput.required = mode === "password";
   codeField.hidden = mode !== "magic-verify";
   codeInput.required = mode === "magic-verify";
+  resendCode.hidden = mode !== "magic-verify";
   submitBtn.textContent =
     mode === "password" ? "Log In" :
     mode === "magic-send" ? "Email Me a Code" : "Verify & Log In";
   modeToggle.textContent =
     mode === "password" ? "Email me a sign-in code instead" : "Use a password instead";
+}
+
+function currentEmail() {
+  return emailInput.value.trim().toLowerCase();
 }
 
 modeToggle.addEventListener("click", (e) => {
@@ -49,15 +57,35 @@ function showInfo(msg) {
 
 async function finishLogin() {
   await claimEnrollments();
-  const next = getQueryParam("next");
-  window.location.href = next || "account.html";
+  window.location.href = safeNextPath(getQueryParam("next"), "account.html");
+}
+
+resendCode.addEventListener("click", async () => {
+  errEl.hidden = true;
+  infoEl.hidden = true;
+  resendCode.disabled = true;
+  try {
+    await sendMagicLink(currentEmail());
+    showInfo("Code sent! Check your email - it expires in 15 minutes.");
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    resendCode.disabled = false;
+  }
+});
+
+const initial = getInitialLoginState(window.location.search);
+emailInput.value = initial.email;
+setMode(initial.mode);
+if (initial.mode === "magic-verify") {
+  showInfo("Enter the code from the separate security email. Codes expire after 15 minutes.");
 }
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   errEl.hidden = true;
   infoEl.hidden = true;
-  const email = document.getElementById("email").value.trim().toLowerCase();
+  const email = currentEmail();
   const label = submitBtn.textContent;
   submitBtn.disabled = true;
   submitBtn.textContent = "Please wait…";
