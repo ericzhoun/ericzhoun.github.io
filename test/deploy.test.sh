@@ -61,6 +61,64 @@ assert_payload_removed() {
   done < "$metadata_path"
 }
 
+assert_unknown_selection_rejected() {
+  local label="$1"
+  shift
+  local capture="$TEST_TMP_ROOT/$label-capture"
+  local metadata="$TEST_TMP_ROOT/$label-meta"
+  local mktemp_marker="$TEST_TMP_ROOT/$label-mktemp-called"
+  local log="$TEST_TMP_ROOT/$label-log"
+  local failed=false
+  mkdir -p "$capture"
+  : > "$metadata"
+
+  if (
+    export DEPLOY_MKTEMP_MARKER="$mktemp_marker"
+    mktemp() {
+      printf 'called\n' >> "$DEPLOY_MKTEMP_MARKER"
+      command mktemp "$@"
+    }
+    export -f mktemp
+    DEPLOY_CAPTURE_DIR="$capture" \
+    DEPLOY_META_PATH="$metadata" \
+    TMPDIR="$PAYLOAD_TMP" \
+    BUTTERBASE_API_KEY=api-key-fixture \
+      "$ROOT_DIR/backend/deploy.sh" "$@" >"$log" 2>&1
+  ); then
+    printf '%s selection unexpectedly succeeded\n' "$label" >&2
+    failed=true
+  fi
+  if [[ -e "$mktemp_marker" ]]; then
+    printf '%s selection created a temporary payload\n' "$label" >&2
+    failed=true
+  fi
+  if [[ -s "$metadata" ]]; then
+    printf '%s selection called curl\n' "$label" >&2
+    failed=true
+  fi
+  if [[ -n "$(find "$capture" -type f -print -quit)" ]]; then
+    printf '%s selection captured a deployment payload\n' "$label" >&2
+    failed=true
+  fi
+  if ! rg -q 'error: unknown function: typo-function' "$log"; then
+    printf '%s selection did not report the unknown function\n' "$label" >&2
+    failed=true
+  fi
+  if rg -q 'api-key-fixture|github-token-fixture|gmail-user-fixture' "$log"; then
+    printf '%s selection diagnostic exposed fixture authorization material\n' "$label" >&2
+    failed=true
+  fi
+  ! $failed
+}
+
+unknown_failures=0
+assert_unknown_selection_rejected all-unknown typo-function || unknown_failures=$((unknown_failures + 1))
+assert_unknown_selection_rejected mixed-unknown claim-enrollments typo-function || unknown_failures=$((unknown_failures + 1))
+if [[ $unknown_failures -ne 0 ]]; then
+  printf '%s unknown-selection checks failed\n' "$unknown_failures" >&2
+  exit 1
+fi
+
 ALL_CAPTURE="$TEST_TMP_ROOT/all-capture"
 ALL_META="$TEST_TMP_ROOT/all-meta"
 mkdir -p "$ALL_CAPTURE"

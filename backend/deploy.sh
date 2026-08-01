@@ -17,7 +17,47 @@ if [[ -z "${BUTTERBASE_API_KEY:-}" ]]; then
   exit 1
 fi
 
+# name|auth|path|impersonation|description
+CONFIGS=(
+  "guest-enroll|none|/guest-enroll|false|Guest checkout: unclaimed pending enrollment + Stripe Checkout session. Public endpoint; pricing computed server-side."
+  "claim-enrollments|required|/claim-enrollments|false|Attaches unclaimed enrollments to the caller by verified email match."
+  "complete-registration|required|/complete-registration|false|Saves the post-payment registration form for an enrollment the caller owns."
+  "class-availability|none|/class-availability|false|Public seat availability (confirmed + fresh pending holds) for a schedule."
+  "enroll-guard|required|/enroll|false|Logged-in enrollment with server-side pricing, dynamic product, and Stripe Checkout. Redirect URLs point to the static olivistart.com frontend."
+  "stripe-webhook|none|/stripe-webhook|false|Payment fulfillment: re-verifies order status via the billing API, then confirms enrollment and creates home bookings. Idempotent.",
+  "sync-enrollment-payment|required|/sync-enrollment-payment|false|On-demand payment sync: reads order status from the billing API as the caller and confirms the enrollment if paid. Called by account/checkout-success pages since billing has no webhook forward.",
+  "manage-account|required|/manage-account|false|Account management: persist verified parent profiles with server-only service access, update contact info on own enrollments, and change password via forgot/reset-password email-code flow.",
+  "manage-students|required|/manage-students|false|Student profile CRUD. Parents manage their own children; admin can manage any.",
+  "manage-artwork|required|/manage-artwork|false|Artwork photo lifecycle: presigned upload/download URLs and delete, gated on student ownership. Storage calls use the service key."
+  "admin-manage|required|/admin-manage|false|Admin-only: create parent accounts, manage their students, grant comped enrollments, and adjust credits. Re-verifies the caller against /auth/me and the admin allowlist; reads and writes go through the REST data API with SERVICE_KEY because students/enrollments are behind user-isolation RLS that ctx.db cannot cross."
+  "sync-student-ages|none||false|Refreshes enrollment ages from dates of birth once a day."
+  "trigger-schedule-bake|none|/trigger-schedule-bake|false|Admin-only (checked against the service key, not ctx.user): dispatches the bake-schedule GitHub Actions workflow to refresh schedule.html's baked snapshot on demand."
+)
+
 selected=("$@")
+if [[ ${#selected[@]} -gt 0 ]]; then
+  matched_configurations=0
+  for selected_name in "${selected[@]}"; do
+    known_selection=false
+    for cfg in "${CONFIGS[@]}"; do
+      IFS='|' read -r configured_name _ <<<"$cfg"
+      if [[ "$selected_name" == "$configured_name" ]]; then
+        known_selection=true
+        matched_configurations=$((matched_configurations + 1))
+        break
+      fi
+    done
+    if ! $known_selection; then
+      printf 'error: unknown function: %s\n' "$selected_name" >&2
+      exit 1
+    fi
+  done
+  if [[ $matched_configurations -eq 0 ]]; then
+    echo "error: no configured functions matched the supplied selections" >&2
+    exit 1
+  fi
+fi
+
 selection_includes() {
   local target="$1" selected_name
   [[ ${#selected[@]} -eq 0 ]] && return 0
@@ -64,23 +104,6 @@ mode = stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode)
 if mode != 0o600 or not stat.S_ISREG(os.stat(path, follow_symlinks=False).st_mode):
     raise SystemExit("deploy payload permissions are not private")
 PY
-
-# name|auth|path|impersonation|description
-CONFIGS=(
-  "guest-enroll|none|/guest-enroll|false|Guest checkout: unclaimed pending enrollment + Stripe Checkout session. Public endpoint; pricing computed server-side."
-  "claim-enrollments|required|/claim-enrollments|false|Attaches unclaimed enrollments to the caller by verified email match."
-  "complete-registration|required|/complete-registration|false|Saves the post-payment registration form for an enrollment the caller owns."
-  "class-availability|none|/class-availability|false|Public seat availability (confirmed + fresh pending holds) for a schedule."
-  "enroll-guard|required|/enroll|false|Logged-in enrollment with server-side pricing, dynamic product, and Stripe Checkout. Redirect URLs point to the static olivistart.com frontend."
-  "stripe-webhook|none|/stripe-webhook|false|Payment fulfillment: re-verifies order status via the billing API, then confirms enrollment and creates home bookings. Idempotent.",
-  "sync-enrollment-payment|required|/sync-enrollment-payment|false|On-demand payment sync: reads order status from the billing API as the caller and confirms the enrollment if paid. Called by account/checkout-success pages since billing has no webhook forward.",
-  "manage-account|required|/manage-account|false|Account management: persist verified parent profiles with server-only service access, update contact info on own enrollments, and change password via forgot/reset-password email-code flow.",
-  "manage-students|required|/manage-students|false|Student profile CRUD. Parents manage their own children; admin can manage any.",
-  "manage-artwork|required|/manage-artwork|false|Artwork photo lifecycle: presigned upload/download URLs and delete, gated on student ownership. Storage calls use the service key."
-  "admin-manage|required|/admin-manage|false|Admin-only: create parent accounts, manage their students, grant comped enrollments, and adjust credits. Re-verifies the caller against /auth/me and the admin allowlist; reads and writes go through the REST data API with SERVICE_KEY because students/enrollments are behind user-isolation RLS that ctx.db cannot cross."
-  "sync-student-ages|none||false|Refreshes enrollment ages from dates of birth once a day."
-  "trigger-schedule-bake|none|/trigger-schedule-bake|false|Admin-only (checked against the service key, not ctx.user): dispatches the bake-schedule GitHub Actions workflow to refresh schedule.html's baked snapshot on demand."
-)
 
 deploy_one() {
   local name="$1" auth="$2" path="$3" impersonation="$4" desc="$5" cron="${6:-}"
