@@ -8,6 +8,7 @@ Implementation commits:
 
 - `d4f2fee` (`fix: harden parent account management`)
 - `f1ff2c9` (`fix: make admin account recovery durable`)
+- `95fde13` (`fix: secure function deployment payloads`)
 
 ## Safety boundary
 
@@ -133,6 +134,42 @@ Green evidence: `test/login-flow.test.mjs` passes 6 of 6.
 - Browser visual inspection at 390 px found the CMS navigation clipped after the
   first sections. A failing viewport assertion was added, then the mobile nav was
   changed to wrap so every section remains visible.
+- Replaced the remaining prohibited literals in the changed `enroll.html` and
+  `registration.html` metadata with plain hyphens.
+
+### 6. Deployment payload security and environment scope
+
+- `backend/deploy.sh` creates one unique payload with `mktemp` for each script
+  invocation under the resolved temporary directory. It validates the exact
+  six-character random-suffix path, rejects non-regular files and symlinks,
+  applies and verifies mode `0600`, and installs an `EXIT` trap before creation.
+- The trap removes only the exact validated payload on normal completion and on
+  failures. The fixed `/tmp/bb-deploy-payload.json` path is never opened or
+  reused.
+- Curl reads its configuration from standard input. Authorization material is
+  not present in curl process arguments, and failure output does not echo the
+  response or payload.
+- Sensitive function environment variables are now least privilege:
+  - `SERVICE_KEY`: `admin-manage`, `enroll-guard`, `guest-enroll`,
+    `manage-account`, `manage-artwork`, and `trigger-schedule-bake` only.
+  - `GITHUB_TOKEN`: `trigger-schedule-bake` only.
+  - `INVITATION_GMAIL_USER_ID`: `admin-manage` only.
+- Selection-aware validation requires the Gmail user ID only when
+  `admin-manage` is selected and the GitHub token only when
+  `trigger-schedule-bake` is selected. The Butterbase API key remains mandatory
+  for every deployment because it authenticates the deploy request itself.
+
+Red evidence: the expanded shell integration test first failed because all
+function payloads contained broad sensitive environment entries. Reordered
+lifecycle assertions then failed because every function reused the fixed `/tmp`
+payload instead of a validated private temporary file.
+
+Green evidence: `test/deploy.test.sh` intercepts the real script for all 13
+configured functions and passes. It proves the exact environment map, 0600 mode,
+unique paths between runs, cleanup after success and simulated curl failure,
+rejection without deletion of an invalid `mktemp` result, selection-aware
+fail-fast behavior, and absence of fixture authorization material from curl
+arguments and failure logs.
 
 ## Final verification
 
@@ -141,7 +178,7 @@ All commands were run from the isolated feature worktree after the fixes:
 | Check | Result |
 | --- | --- |
 | `node --test` | 203 passed, 0 failed |
-| `bash test/deploy.test.sh` | passed |
+| `bash test/deploy.test.sh` | all 13 payload scopes, private temp lifecycle, failure cleanup, and fail-fast checks passed |
 | `bash -n backend/deploy.sh test/deploy.test.sh` | passed |
 | `node --check` for browser, deployed function, archived function, and browser verifier JavaScript | passed |
 | `git diff --check` | passed |
