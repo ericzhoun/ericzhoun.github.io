@@ -4,7 +4,10 @@ Date: 2026-08-01
 
 Base commit: `5249be4de2f22fe4a42f211ed721a09eb2f51abc`
 
-Implementation commit: `d4f2fee` (`fix: harden parent account management`)
+Implementation commits:
+
+- `d4f2fee` (`fix: harden parent account management`)
+- `f1ff2c9` (`fix: make admin account recovery durable`)
 
 ## Safety boundary
 
@@ -22,6 +25,11 @@ were intercepted and mocked on localhost.
   refreshed end-user JWT.
 - Added a server-side data gateway with fixed resource, operation, field,
   identifier, filter, select, order, and limit allowlists.
+- Every gateway read now sends an explicit `select` projection. An omitted query
+  or omitted select defaults to the resource's complete read allowlist, so the
+  service-key request can never fall back to an unrestricted row shape.
+- Blank and whitespace-only nullable program descriptions, image URLs, and
+  schedule notes are normalized to `null` at the function boundary.
 - Kept schedule publishing and attendance behind separate explicit actions.
 - Preserved dashboard, CRUD, attendance, account detail, and schedule publish
   behavior.
@@ -34,9 +42,11 @@ not exist, then because requests were not yet constrained. The repository-wide
 executable-source credential test also failed until the archived fallback was
 removed.
 
-Green evidence: `test/admin-data-gateway.test.mjs` passes 9 of 9, including
-non-admin rejection, disallowed resource and operation rejection, fixed action
-validation, browser source checks, and the tracked executable-source scan.
+Green evidence: `test/admin-data-gateway.test.mjs` passes 12 of 12, including
+exact default projections for both omitted-query forms, nullable-field
+normalization, non-admin rejection, disallowed resource and operation rejection,
+fixed action validation, browser source checks, and the tracked
+executable-source scan.
 
 ### 2. Server-authoritative parent profile identity
 
@@ -66,18 +76,40 @@ identity, and verified-name fallback.
 - Profile HTTP rejection and Gmail network rejection are caught independently.
 - Added an idempotent admin-only `recover-account` action that creates or updates
   the missing profile and retries both onboarding deliveries independently.
+- After signup, `admin-manage` stores the normalized account identity in durable
+  private `ctx.kv` under an email-keyed namespace with a 30-day TTL before
+  attempting profile persistence. Butterbase documents function KV as durable
+  and private by default, so the implementation never calls `expose` and clients
+  cannot read the pending record. See the official
+  [Butterbase KV documentation](https://docs.butterbase.ai/core-concepts/kv/).
+- A later create retry or explicit `lookup-account-recovery` resolves that record
+  without another signup. Normal `EMAIL_EXISTS` behavior remains when no pending
+  record exists.
+- Recovery requires the submitted user ID and normalized email to match the
+  private pending record. The record is deleted only after profile persistence
+  succeeds. KV lookup failures fail closed before signup, while set and delete
+  failures are reported in structured recovery state.
 - The CMS keeps the incomplete-profile warning visible, distinguishes partial
   outcomes, and offers `Complete setup and resend onboarding` without recreating
   the auth account.
+- The incomplete-profile view renders before, and independently of, student,
+  enrollment, schedule, and program reads. A Data API outage cannot hide the
+  durable recovery action.
 - Browser acceptance found and fixed a notice-lifecycle regression where a
   transient creation message removed the persistent recovery warning.
 
 Red evidence: focused tests failed first for profile rejection, Gmail rejection,
-missing recovery behavior, idempotent update behavior, and persistent notice
-rendering.
+missing recovery behavior, idempotent update behavior, persistent notice
+rendering, missing KV persistence, second signup on retry, unknown lookup,
+accepted tampering, KV failures, and missing successful cleanup. The
+handler-backed browser test then failed after reload because nonessential account
+detail reads hid the recovery UI during the simulated Data API outage.
 
-Green evidence: the admin management, account messages, and CMS source suites
-pass all recovery and partial-delivery cases.
+Green evidence: the admin management suite passes 41 of 41, including reload
+retry, one-signup behavior, explicit lookup, tampered user and email, get/set/del
+failure semantics, 30-day TTL, idempotent profile persistence, and successful KV
+clearing. The account messages and CMS suites pass all recovery and
+partial-delivery cases.
 
 ### 4. Safe return paths
 
@@ -94,7 +126,10 @@ Green evidence: `test/login-flow.test.mjs` passes 6 of 6.
 ### 5. Copy and responsive UI
 
 - Replaced prohibited em dashes in `js/account.js` with plain hyphens.
-- Added a source policy regression test.
+- Added a source policy regression test using the escaped `\u2014` code point so
+  the test itself follows the text rule. All files changed from the remediation
+  base were scanned, and remaining changed-file comment literals were replaced
+  with plain hyphens.
 - Browser visual inspection at 390 px found the CMS navigation clipped after the
   first sections. A failing viewport assertion was added, then the mobile nav was
   changed to wrap so every section remains visible.
@@ -105,18 +140,25 @@ All commands were run from the isolated feature worktree after the fixes:
 
 | Check | Result |
 | --- | --- |
-| `node --test` | 193 passed, 0 failed |
+| `node --test` | 203 passed, 0 failed |
 | `bash test/deploy.test.sh` | passed |
 | `bash -n backend/deploy.sh test/deploy.test.sh` | passed |
-| `node --check` for browser, deployed function, and archived function JavaScript | passed |
+| `node --check` for browser, deployed function, archived function, and browser verifier JavaScript | passed |
 | `git diff --check` | passed |
 | tracked `*.js` and `*.html` Butterbase service-credential scan | 0 matching files |
+| all files changed from the remediation base scanned for prohibited em dash literals | 0 matching files |
 
 The isolated Google Chrome acceptance script completed the real admin and parent
-UI flows with a temporary browser profile and mocked external boundaries:
+UI flows with a temporary browser profile. It invoked the real
+`backend/functions/admin-manage.js` handler while mocking every external
+boundary:
 
-- 50 intercepted API requests.
-- 13 admin function requests.
+- 67 intercepted browser API requests and 54 handler outbound requests.
+- Exactly 1 signup across initial creation and reload retry.
+- Pending private KV recovery existed after the simulated profile failure and
+  was absent after successful recovery.
+- 0 nonessential Data API reads while the recovery-only view rendered during a
+  simulated Data API outage.
 - 0 direct admin Data API requests.
 - 0 browser authorization headers containing a Butterbase service credential.
 - Direct parent `parent_profiles` patch returned 403.
@@ -124,7 +166,10 @@ UI flows with a temporary browser profile and mocked external boundaries:
   `user_id` or `email`.
 - Admin refresh displayed the updated parent name and verified email.
 - Account creation failure state, explicit recovery, partial resend messaging,
-  welcome-link prefilling, and code focus all passed.
+  reload retry, welcome-link prefilling, and code focus all passed.
+- Blank program description, blank program image URL, and blank schedule notes
+  reached the handler and then the mocked Data API as `null`.
+- Every handler-backed admin read carried an explicit `select` projection.
 - 390 by 844 viewport had no document overflow and all admin navigation links
   were on-screen.
 - 0 unexpected console warnings or errors.
@@ -144,6 +189,8 @@ and removes its temporary browser profile when complete.
 3. Confirm `SERVICE_KEY`, app ID, API URL, site URL, and approved Gmail integration
    settings are present in the affected server functions without printing their
    values.
+   Confirm the function runtime provides `ctx.kv`; no KV expose rule should be
+   created because pending recovery records must remain function-private.
 4. Deploy the remediated `admin-manage` and `manage-account` functions and the
    static browser assets as one coordinated release.
 5. While the app is paused, apply and verify
@@ -151,8 +198,10 @@ and removes its temporary browser profile when complete.
    own-row SELECT, service bypass, and no end-user INSERT, UPDATE, DELETE, or ALL
    policy before resuming.
 6. Run an approved disposable-user smoke test for admin creation, forced profile
-   recovery, both onboarding deliveries, parent profile update, admin refresh,
-   cross-user read denial, and direct parent write denial.
+   failure, browser reload and create retry, one-signup behavior, recovery, both
+   onboarding deliveries, parent profile update, admin refresh, cross-user read
+   denial, direct parent write denial, and pending KV deletion after profile
+   success.
 7. Resume traffic only after the policy, function, static asset, credential
    rotation, and smoke-test checks all pass. Retain the pre-migration RLS snapshot
    for the documented rollback procedure.
