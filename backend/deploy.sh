@@ -62,6 +62,13 @@ if path:
     triggers.append({"type": "http", "config": {"auth": auth, "path": path, "method": "POST"}})
 if cron:
     triggers.append({"type": "cron", "config": {"schedule": cron, "timezone": "America/Los_Angeles"}})
+env_vars = {
+    "SITE_URL": "https://olivistart.com",
+    "SERVICE_KEY": os.environ["BUTTERBASE_API_KEY"],
+    "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
+}
+if name == "admin-manage":
+    env_vars["INVITATION_GMAIL_USER_ID"] = os.environ.get("INVITATION_GMAIL_USER_ID", "")
 payload = {
     "name": name,
     "description": desc,
@@ -73,12 +80,7 @@ payload = {
     # (encrypted at rest, never in the repo). GITHUB_TOKEN: only read by
     # trigger-schedule-bake; optional for every other function, so deploys
     # without it in the environment still succeed.
-    "envVars": {
-        "SITE_URL": "https://olivistart.com",
-        "SERVICE_KEY": os.environ["BUTTERBASE_API_KEY"],
-        "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
-        "INVITATION_GMAIL_USER_ID": os.environ.get("INVITATION_GMAIL_USER_ID", ""),
-    },
+    "envVars": env_vars,
 }
 json.dump(payload, sys.stdout)
 PY
