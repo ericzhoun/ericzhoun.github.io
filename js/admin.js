@@ -479,7 +479,50 @@ function renderNewAccountForm() {
   });
 }
 
+function renderAccountRecovery(userId, email, name, accountState) {
+  const recoveryPersisted = accountState?.recovery_persisted !== false;
+  const recoveryAction = recoveryPersisted
+    ? button("Complete setup and resend onboarding", "recover-account", "btn btn-sm btn-secondary")
+    : "";
+  const recoveryGuidance = recoveryPersisted
+    ? "Complete setup here instead of creating the account again."
+    : "The recovery record could not be saved. Contact support before trying again.";
+
+  app.innerHTML = `<div class="admin-crud-header">
+      <h1>${esc(name || email || "Parent")}</h1><div class="admin-header-actions">${recoveryAction}${button("← Back to Accounts", "back-to-accounts")}</div></div>
+    <p class="muted">${esc(email || "")}</p>
+    <p class="admin-notice" role="status">This account exists, but its profile setup is incomplete. ${esc(recoveryGuidance)}</p>`;
+  renderNotification();
+
+  accountViewClick.listen(app, "click", async (event) => {
+    const action = event.target.dataset.action || "";
+    if (action === "back-to-accounts") { await accounts(); return; }
+    if (action !== "recover-account") return;
+
+    const recoveryButton = event.target;
+    recoveryButton.disabled = true;
+    recoveryButton.textContent = "Completing setup…";
+    try {
+      const result = await adminFn("recover-account", {
+        user_id: userId,
+        email,
+        parent_name: name || email,
+      });
+      notify(getRecoveryMessage(result));
+      await accountDetail(userId, email, name, result);
+    } catch (error) {
+      alert(error.message || "Could not complete account setup.");
+      recoveryButton.disabled = false;
+      recoveryButton.textContent = "Complete setup and resend onboarding";
+    }
+  });
+}
+
 async function accountDetail(userId, email, name, accountState = null) {
+  if (accountState?.profile_saved === false) {
+    renderAccountRecovery(userId, email, name, accountState);
+    return;
+  }
   const [students, enrollments, schedules, programs] = await Promise.all([
     adminData.read("students", {
       filters: [{ field: "user_id", operator: "eq", value: userId }],
@@ -512,18 +555,11 @@ async function accountDetail(userId, email, name, accountState = null) {
   }).join("");
   const studentOptions = students.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
   const scheduleOptions = schedules.map((s) => `<option value="${esc(s.id)}">${esc(scheduleLabel(s))}</option>`).join("");
-  const needsProfileRecovery = accountState?.profile_saved === false;
-  const onboardingLabel = needsProfileRecovery
-    ? "Complete setup and resend onboarding"
-    : "Resend onboarding emails";
-  const recoveryNotice = needsProfileRecovery
-    ? `<p class="admin-notice" role="status">This account exists, but its profile setup is incomplete. Complete setup here instead of creating the account again.</p>`
-    : "";
+  const onboardingLabel = "Resend onboarding emails";
 
   app.innerHTML = `<div class="admin-crud-header">
       <h1>${esc(name || email || "Parent")}</h1><div class="admin-header-actions">${button(onboardingLabel, "resend-onboarding", "btn btn-sm btn-secondary")}${button("← Back to Accounts", "back-to-accounts")}</div></div>
     <p class="muted">${esc(email || "")}</p>
-    ${recoveryNotice}
     <div id="form-slot"></div>
     <section><div class="admin-crud-header"><h2>Students</h2>${button("+ Add student", "add-student-form")}</div>
       ${table(["Name", "Age", "DOB", "Actions"], studentRows)}</section>
@@ -558,21 +594,11 @@ async function accountDetail(userId, email, name, accountState = null) {
     if (action === "resend-onboarding") {
       const resendButton = event.target;
       resendButton.disabled = true;
-      resendButton.textContent = needsProfileRecovery ? "Completing setup…" : "Resending…";
+      resendButton.textContent = "Resending…";
       try {
-        if (needsProfileRecovery) {
-          const result = await adminFn("recover-account", {
-            user_id: userId,
-            email,
-            parent_name: name || email,
-          });
-          notify(getRecoveryMessage(result));
-          await accountDetail(userId, email, name, result);
-        } else {
-          const result = await adminFn("resend-invitation", { user_id: userId });
-          notify(getOnboardingDeliveryMessage(result));
-          renderNotification();
-        }
+        const result = await adminFn("resend-invitation", { user_id: userId });
+        notify(getOnboardingDeliveryMessage(result));
+        renderNotification();
       } catch (error) {
         alert(error.message || "Could not resend onboarding emails.");
       } finally {

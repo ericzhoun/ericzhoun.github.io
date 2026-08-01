@@ -1,4 +1,4 @@
-// Backend API config — shared across all pages.
+// Backend API config - shared across all pages.
 // The backend lives at herfield.butterbase.ai (app_48ul5eszfv7v).
 export const APP_ID = "app_48ul5eszfv7v";
 export const API_BASE = `https://api.butterbase.ai/v1/${APP_ID}`;
@@ -20,7 +20,7 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
 
 /**
  * Fetch wrapper for Butterbase REST API with public (anon) access.
- * No auth header — relies on RLS public read policies.
+ * No auth header - relies on RLS public read policies.
  * Pass an optional JWT token to read private rows (e.g. own enrollments).
  */
 export async function apiGet(path, token) {

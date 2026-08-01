@@ -85,6 +85,35 @@ test("admin data reads use the server gateway and return rows", async () => {
   );
 });
 
+test("admin data reads project the full resource allowlist when query is omitted", async () => {
+  const { response, calls } = await callHandler({
+    action: "admin-data",
+    operation: "read",
+    resource: "programs",
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    calls.find((call) => call.url.includes("/v1/app_test/programs")).url,
+    "https://api.test/v1/app_test/programs?select=id%2Cname%2Cslug%2Cdescription%2Cimage_url%2Csort_order%2Cnum_classes%2Cactive%2Cprogram_type%2Ccreated_at%2Cupdated_at",
+  );
+});
+
+test("admin data reads project the full resource allowlist when select is omitted", async () => {
+  const { response, calls } = await callHandler({
+    action: "admin-data",
+    operation: "read",
+    resource: "programs",
+    query: { order: [{ field: "sort_order", direction: "asc" }] },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    calls.find((call) => call.url.includes("/v1/app_test/programs")).url,
+    "https://api.test/v1/app_test/programs?select=id%2Cname%2Cslug%2Cdescription%2Cimage_url%2Csort_order%2Cnum_classes%2Cactive%2Cprogram_type%2Ccreated_at%2Cupdated_at&order=sort_order.asc",
+  );
+});
+
 test("admin data writes allow only declared resource fields", async () => {
   const allowed = await callHandler({
     action: "admin-data",
@@ -107,6 +136,33 @@ test("admin data writes allow only declared resource fields", async () => {
   });
   assert.equal(rejected.response.status, 400);
   assert.equal(rejected.calls.some((call) => call.url.includes("/enrollments/")), false);
+});
+
+test("admin data writes normalize blank nullable text fields to null", async () => {
+  const program = await callHandler({
+    action: "admin-data",
+    operation: "create",
+    resource: "programs",
+    fields: { description: "", image_url: " \t " },
+  });
+  assert.equal(program.response.status, 200);
+  assert.deepEqual(
+    program.calls.find((call) => call.url.endsWith("/programs") && call.method === "POST").body,
+    { description: null, image_url: null },
+  );
+
+  const schedule = await callHandler({
+    action: "admin-data",
+    operation: "update",
+    resource: "class_schedules",
+    id: UUID,
+    fields: { notes: "   " },
+  });
+  assert.equal(schedule.response.status, 200);
+  assert.deepEqual(
+    schedule.calls.find((call) => call.url.endsWith(`/class_schedules/${UUID}`)).body,
+    { notes: null },
+  );
 });
 
 test("admin data gateway rejects disallowed resources, operations, identifiers, and queries", async () => {

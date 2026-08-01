@@ -1451,7 +1451,7 @@ textarea {
   border: 2px solid;
 }
 
-/* Grid wrapper — horizontal scroll on small screens */
+/* Grid wrapper - horizontal scroll on small screens */
 .calendar-grid-wrapper {
   overflow-x: auto;
   border: 1px solid var(--color-border);

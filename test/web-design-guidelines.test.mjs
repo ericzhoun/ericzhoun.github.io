@@ -170,5 +170,5 @@ test("contact page provides an accessible, responsive studio location map", asyn
 });
 
 test("account source follows the plain-hyphen copy policy", async () => {
-  assert.doesNotMatch(await read("js/account.js"), /—/);
+  assert.doesNotMatch(await read("js/account.js"), /\u2014/);
 });

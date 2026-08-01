@@ -44,6 +44,8 @@ export async function handler(req, ctx) {
         return await resendInvitation(ctx, body);
       case "recover-account":
         return await recoverAccount(ctx, body);
+      case "lookup-account-recovery":
+        return await lookupAccountRecovery(ctx, body);
       case "admin-data":
         return await adminData(ctx, body);
       case "publish-schedule":
@@ -131,6 +133,8 @@ async function serviceFunction(ctx, name, body) {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DAY_VALUES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const STATUS_VALUES = ["pending", "confirmed", "cancelled"];
+const RECOVERY_KEY_PREFIX = "admin-account-recovery:";
+const RECOVERY_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 const ADMIN_DATA_RESOURCES = {
   programs: {
@@ -257,17 +261,18 @@ async function markAttendance(ctx, body) {
 }
 
 function buildAdminQuery(policy, candidate) {
-  if (candidate === undefined) return "";
+  if (candidate === undefined) candidate = {};
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw requestError("Query is invalid");
   assertOnlyKeys(candidate, ["select", "order", "filters", "limit"]);
   const params = new URLSearchParams();
 
+  let selected = policy.read;
   if (candidate.select !== undefined) {
     if (!Array.isArray(candidate.select) || candidate.select.length === 0) throw requestError("Select is invalid");
-    const selected = candidate.select.map((field) => str(field));
+    selected = candidate.select.map((field) => str(field));
     if (selected.some((field) => !field || !policy.read.includes(field))) throw requestError("Select field is not allowed");
-    params.set("select", [...new Set(selected)].join(","));
   }
+  params.set("select", [...new Set(selected)].join(","));
 
   if (candidate.order !== undefined) {
     if (!Array.isArray(candidate.order) || candidate.order.length === 0 || candidate.order.length > 3) {
@@ -342,7 +347,14 @@ function validateAdminValue(value, validator, label) {
     if (validator === "positiveInteger" && value < 1) throw requestError(`${label} must be positive`);
     return value;
   }
-  if (validator === "nullableText" && value === null) return null;
+  if (validator === "nullableText") {
+    if (value === null) return null;
+    if (typeof value !== "string") throw requestError(`${label} must be text`);
+    const nullableText = value.trim();
+    if (nullableText === "") return null;
+    if (nullableText.length > 4000) throw requestError(`${label} is invalid`);
+    return nullableText;
+  }
   if (validator === "nullableDate" && value === null) return null;
   if (typeof value !== "string") throw requestError(`${label} must be text`);
   const valueText = value.trim();
@@ -389,6 +401,46 @@ function normalizeEmail(value) {
   return email;
 }
 
+function recoveryKey(email) {
+  return `${RECOVERY_KEY_PREFIX}${email}`;
+}
+
+function validatePendingRecovery(candidate, email) {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    throw new Error("Pending account recovery is invalid");
+  }
+  const userId = str(candidate.user_id);
+  const storedEmail = normalizeEmail(candidate.email);
+  const parentName = str(candidate.parent_name);
+  if (!userId || !UUID_PATTERN.test(userId) || storedEmail !== email || !parentName || parentName.length > 200) {
+    throw new Error("Pending account recovery is invalid");
+  }
+  return { user_id: userId, email: storedEmail, parent_name: parentName };
+}
+
+async function readPendingRecovery(ctx, email) {
+  if (!ctx.kv) throw new Error("Pending account recovery storage is unavailable");
+  const candidate = await ctx.kv.get(recoveryKey(email));
+  return candidate === null ? null : validatePendingRecovery(candidate, email);
+}
+
+async function persistPendingRecovery(ctx, pending) {
+  if (!ctx.kv) throw new Error("Pending account recovery storage is unavailable");
+  await ctx.kv.set(recoveryKey(pending.email), pending, { ttl: RECOVERY_TTL_SECONDS });
+}
+
+function pendingRecoveryState(pending) {
+  return {
+    account_exists: true,
+    account: { user_id: pending.user_id, email: pending.email, name: pending.parent_name },
+    profile_saved: false,
+    code_sent: false,
+    welcome_sent: false,
+    recovery_persisted: true,
+    recovery_required: true,
+  };
+}
+
 function json(obj, status) {
   return new Response(JSON.stringify(obj), {
     status,
@@ -403,6 +455,18 @@ async function createAccount(ctx, body) {
   const displayName = str(body.display_name);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return json({ error: "A valid email is required" }, 400);
+  }
+  if (displayName && displayName.length > 200) return json({ error: "Parent name is too long" }, 400);
+
+  try {
+    const pending = await readPendingRecovery(ctx, email);
+    if (pending) return json(pendingRecoveryState(pending), 200);
+  } catch (error) {
+    console.error("admin create-account recovery lookup failed:", error && error.message);
+    return json({
+      error: "Could not check account recovery state. No account was created.",
+      recovery_state_unavailable: true,
+    }, 503);
   }
 
   const res = await fetch(`${apiBase(ctx)}/auth/${ctx.env.BUTTERBASE_APP_ID}/signup`, {
@@ -422,6 +486,15 @@ async function createAccount(ctx, body) {
 
   const parentName = displayName || email;
   const account = { user_id: result.user.id, email, name: parentName };
+  const pending = { user_id: account.user_id, email, parent_name: parentName };
+  let recoveryPersisted = false;
+  try {
+    await persistPendingRecovery(ctx, pending);
+    recoveryPersisted = true;
+  } catch (error) {
+    console.error("admin create-account recovery persistence failed:", error && error.message);
+  }
+
   let profileSaved = false;
   try {
     await data(ctx, "parent_profiles", {
@@ -431,6 +504,23 @@ async function createAccount(ctx, body) {
     profileSaved = true;
   } catch (error) {
     console.error("admin create-account profile save failed:", error && error.message);
+    if (!recoveryPersisted) {
+      try {
+        await persistPendingRecovery(ctx, pending);
+        recoveryPersisted = true;
+      } catch (recoveryError) {
+        console.error("admin create-account recovery retry failed:", recoveryError && recoveryError.message);
+      }
+    }
+  }
+
+  if (profileSaved && recoveryPersisted) {
+    try {
+      await ctx.kv.del(recoveryKey(email));
+      recoveryPersisted = false;
+    } catch (error) {
+      console.error("admin create-account recovery cleanup failed:", error && error.message);
+    }
   }
 
   let welcomeSent = false;
@@ -445,6 +535,7 @@ async function createAccount(ctx, body) {
     profile_saved: profileSaved,
     code_sent: true,
     welcome_sent: welcomeSent,
+    recovery_persisted: recoveryPersisted,
     recovery_required: !profileSaved || !welcomeSent,
   }, 200);
 }
@@ -508,6 +599,21 @@ async function deliverOnboarding(ctx, email, parentName) {
   };
 }
 
+async function lookupAccountRecovery(ctx, body) {
+  assertOnlyKeys(body, ["action", "email"]);
+  const email = normalizeEmail(body.email);
+  if (!email) throw requestError("A valid email is required");
+  try {
+    const pending = await readPendingRecovery(ctx, email);
+    return pending
+      ? json(pendingRecoveryState(pending), 200)
+      : json({ error: "No pending account recovery was found" }, 404);
+  } catch (error) {
+    console.error("admin recovery lookup failed:", error && error.message);
+    return json({ error: "Could not check account recovery state" }, 503);
+  }
+}
+
 async function recoverAccount(ctx, body) {
   assertOnlyKeys(body, ["action", "user_id", "email", "parent_name"]);
   const userId = validateUuid(body.user_id, "Parent account id");
@@ -515,9 +621,21 @@ async function recoverAccount(ctx, body) {
   const parentName = str(body.parent_name);
   if (!email) throw requestError("A valid email is required");
   if (!parentName || parentName.length > 200) throw requestError("Parent name is required");
-  const account = { user_id: userId, email, name: parentName };
+  let pending;
+  try {
+    pending = await readPendingRecovery(ctx, email);
+  } catch (error) {
+    console.error("admin recover-account recovery lookup failed:", error && error.message);
+    return json({ error: "Could not check account recovery state" }, 503);
+  }
+  if (!pending) return json({ error: "No pending account recovery was found" }, 404);
+  if (pending.user_id !== userId || pending.parent_name !== parentName) {
+    throw requestError("Account recovery details do not match");
+  }
+  const account = { user_id: pending.user_id, email: pending.email, name: pending.parent_name };
 
   let profileSaved = false;
+  let recoveryPersisted = true;
   try {
     const existing = rows(await data(
       ctx,
@@ -526,12 +644,12 @@ async function recoverAccount(ctx, body) {
     if (existing) {
       await data(ctx, `parent_profiles/${encodeURIComponent(userId)}`, {
         method: "PATCH",
-        body: { email, parent_name: parentName },
+        body: { email: pending.email, parent_name: pending.parent_name },
       });
     } else {
       await data(ctx, "parent_profiles", {
         method: "POST",
-        body: { user_id: userId, email, parent_name: parentName },
+        body: { user_id: pending.user_id, email: pending.email, parent_name: pending.parent_name },
       });
     }
     profileSaved = true;
@@ -539,12 +657,22 @@ async function recoverAccount(ctx, body) {
     console.error("admin recover-account profile save failed:", error && error.message);
   }
 
-  const delivery = await deliverOnboarding(ctx, email, parentName);
+  if (profileSaved) {
+    try {
+      await ctx.kv.del(recoveryKey(pending.email));
+      recoveryPersisted = false;
+    } catch (error) {
+      console.error("admin recover-account recovery cleanup failed:", error && error.message);
+    }
+  }
+
+  const delivery = await deliverOnboarding(ctx, pending.email, pending.parent_name);
   return json({
     account_exists: true,
     account,
     profile_saved: profileSaved,
     ...delivery,
+    recovery_persisted: recoveryPersisted,
     recovery_required: !profileSaved || !delivery.code_sent || !delivery.welcome_sent,
   }, 200);
 }
