@@ -253,3 +253,22 @@ and removes its temporary browser profile when complete.
 7. Resume traffic only after the policy, function, static asset, credential
    rotation, and smoke-test checks all pass. Retain the pre-migration RLS snapshot
    for the documented rollback procedure.
+
+## Live rollout completed 2026-08-01
+
+- Gmail was configured and the dedicated `olivistastudio@gmail.com` connection
+  was authorized. A `+smoke` delivery succeeded through `GMAIL_SEND_EMAIL`.
+- The remediated service functions were deployed with the replacement key and
+  Gmail sender identity. The historical browser-exposed key was revoked.
+- Static assets were published to `main` while the app was paused, then the app
+  was resumed after verification.
+- `parent_profiles` RLS was replaced with exactly one end-user own-row SELECT
+  policy and the service bypass policy. No end-user write policy remains.
+- Live smoke checks passed: static login page HTTP 200, old-key request rejected
+  with an error response, disposable parent signup/login, profile save through
+  `manage-account`, own-row read, and direct profile PATCH denied as a hidden
+  row (HTTP 404).
+- The live static `js/api.js` contains no service credential or direct admin API.
+- Temporary rollout keys, tokens, RLS snapshot, and smoke artifacts were removed
+  after the checks. The deployment CLI retains the replacement key in its secure
+  local credential store for future authorized deployments.

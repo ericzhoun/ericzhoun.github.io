@@ -1,6 +1,6 @@
 # Parent profile select-only policy migration
 
-Status: specified, not applied
+Status: applied 2026-08-01 during the approved maintenance window
 
 This runbook changes `parent_profiles` from parent-readable and parent-writable
 to parent-readable only. Profile writes then occur only through the verified
@@ -65,3 +65,13 @@ app is serving traffic.
 Keep the app paused. Remove the replacement policy set, re-enable RLS, and
 recreate the exact policies captured in the precondition snapshot. Verify the
 restored policy list before resuming. Never disable RLS as a rollback state.
+
+## Applied verification
+
+- The app was paused while the policy set was replaced.
+- The resulting table has exactly `parent_profiles_own_select` for
+  `butterbase_user` and `parent_profiles_service_bypass` for
+  `butterbase_service`.
+- A live disposable parent saved through `manage-account`, read its own row,
+  and received a hidden-row denial for a direct profile PATCH.
+- The app was resumed only after those checks passed.
