@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { getInitialLoginState, getLoginFocusTarget, safeNextPath } from "../js/login-flow.js";
+import { canonicalSiteUrl, getInitialLoginState, getLoginFocusTarget, safeNextPath } from "../js/login-flow.js";
 
 test("welcome links open code verification with a normalized prefilled email", () => {
   assert.deepEqual(
@@ -72,4 +72,11 @@ test("safeNextPath rejects encoded and malformed slash bypasses", () => {
   for (const candidate of rejected) {
     assert.equal(safeNextPath(candidate, "fallback.html"), "fallback.html", candidate);
   }
+});
+
+test("canonicalSiteUrl keeps auth redirects on the root site origin", () => {
+  assert.equal(
+    canonicalSiteUrl("admin.html", "https://olivistart.com"),
+    "https://olivistart.com/admin.html",
+  );
 });

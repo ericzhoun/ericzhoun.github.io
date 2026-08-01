@@ -1,6 +1,6 @@
 // Auth helpers - email/password and magic-link auth against the Butterbase
 // backend, tokens cached in localStorage. Ported from herfield app/lib/auth.js.
-import { AUTH_BASE, API_BASE, fetchWithTimeout } from "./api.js";
+import { AUTH_BASE, API_BASE, SITE_URL, fetchWithTimeout } from "./api.js";
 
 const TOKEN_KEY = "olivistart_access_token";
 const REFRESH_KEY = "olivistart_refresh_token";
@@ -183,8 +183,9 @@ export async function refreshToken() {
 export function requireAuth() {
   const user = getUser();
   if (!isLoggedIn() || !user) {
-    const here = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.href = `login.html?next=${here}`;
+    const loginUrl = new URL("login.html", `${SITE_URL}/`);
+    loginUrl.searchParams.set("next", window.location.pathname + window.location.search);
+    window.location.href = loginUrl.toString();
     return null;
   }
   return user;

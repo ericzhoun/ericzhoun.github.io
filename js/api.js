@@ -59,6 +59,7 @@ export async function callFunction(name, body, token, extraHeaders) {
     const err = new Error(
       (nested ? nested.message : detail) || data.message || `Function error: ${res.status}`
     );
+    err.status = res.status;
     err.code = data.code || nested?.code;
     throw err;
   }

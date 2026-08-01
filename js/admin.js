@@ -1,4 +1,5 @@
-import { callFunction, formatPrice, formatTime, planCampBundleSync } from "./api.js";
+import { callFunction, formatPrice, formatTime, planCampBundleSync, SITE_URL } from "./api.js";
+import { createAdminCaller } from "./admin-auth.js";
 import { createAdminDataClient } from "./admin-data.js";
 import {
   getAccountCreationMessage,
@@ -26,8 +27,7 @@ const button = (label, action = "", cls = "btn btn-sm") => `<button class="${cls
 // permits here, so the token cannot be moved to a custom header. It has to be
 // fresh, since a stored access token expires after an hour and the platform
 // then rejects the call at the edge before the function runs.
-const adminFn = async (action, body = {}) =>
-  callFunction("admin-manage", { action, ...body }, (await refreshToken()) || getToken());
+const adminFn = createAdminCaller({ getToken, refreshToken, callFunction });
 const adminData = createAdminDataClient(adminFn);
 
 function notify(message) { notification = message; }
@@ -38,7 +38,13 @@ function renderNotification() {
 }
 
 function guard() {
-  if (!isAdmin()) { location.href = `login.html?next=${encodeURIComponent("admin.html")}`; return false; }
+  if (!isAdmin()) {
+    const loginUrl = new URL("login.html", `${SITE_URL}/`);
+    loginUrl.searchParams.set("next", "admin.html");
+    location.href = loginUrl.toString();
+    return false;
+  }
+
   return true;
 }
 function renderNav() { document.querySelector("#admin-nav").innerHTML = nav.map(([id, label]) => `<a href="#${id}" class="${query() === id ? "active" : ""}">${label}</a>`).join(""); }

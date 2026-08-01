@@ -1,6 +1,6 @@
 // Account page - enrollments, credits, upcoming classes, make-up booking.
 // Ported from herfield app/account/AccountPageClient.js, compiled to vanilla JS.
-import { apiGet, apiGetByIds, callFunction, formatPrice, formatTime, getQueryParam, compareDayOfWeek } from "./api.js";
+import { apiGet, apiGetByIds, callFunction, formatPrice, formatTime, getQueryParam, compareDayOfWeek, SITE_URL } from "./api.js";
 import { isLoggedIn, getUser, isAdmin, logout, getToken, refreshToken, requireAuth, claimEnrollments } from "./auth.js";
 import { calculateStudentAge } from "./student-age.js";
 import { groupEnrollmentsByOrder } from "./enrollment-grouping.js";
@@ -1105,8 +1105,9 @@ async function loadData() {
     // previously signed-in parent never sees a raw 401 response.
     const token = await refreshToken();
     if (!token) {
-      const here = encodeURIComponent(window.location.pathname + window.location.search);
-      window.location.href = `login.html?next=${here}`;
+      const loginUrl = new URL("login.html", `${SITE_URL}/`);
+      loginUrl.searchParams.set("next", window.location.pathname + window.location.search);
+      window.location.href = loginUrl.toString();
       return;
     }
 
@@ -1139,6 +1140,7 @@ loadData();
 initLightbox();
 } else {
   const root = document.getElementById("account-root");
-  const here = encodeURIComponent(window.location.pathname + window.location.search);
-  root.innerHTML = `<p class="auth-error">Your session has expired. <a href="login.html?next=${here}">Log in to view your account.</a></p>`;
+  const loginUrl = new URL("login.html", `${SITE_URL}/`);
+  loginUrl.searchParams.set("next", window.location.pathname + window.location.search);
+  root.innerHTML = `<p class="auth-error">Your session has expired. <a href="${loginUrl.toString()}">Log in to view your account.</a></p>`;
 }

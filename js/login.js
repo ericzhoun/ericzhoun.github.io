@@ -2,8 +2,8 @@
 // login, unclaimed enrollments matching the verified email attach to the
 // account (guest-checkout recovery path).
 import { login, isLoggedIn, sendMagicLink, verifyMagicLink, claimEnrollments } from "./auth.js";
-import { getQueryParam } from "./api.js";
-import { getInitialLoginState, getLoginFocusTarget, safeNextPath } from "./login-flow.js";
+import { getQueryParam, SITE_URL } from "./api.js";
+import { canonicalSiteUrl, getInitialLoginState, getLoginFocusTarget } from "./login-flow.js";
 
 const errEl = document.getElementById("auth-error");
 const infoEl = document.getElementById("auth-info");
@@ -58,7 +58,7 @@ function showInfo(msg) {
 
 async function finishLogin() {
   await claimEnrollments();
-  window.location.href = safeNextPath(getQueryParam("next"), "account.html");
+  window.location.href = canonicalSiteUrl(getQueryParam("next"), SITE_URL);
 }
 
 resendCode.addEventListener("click", async () => {

@@ -14,10 +14,10 @@ test("admin.js routes the accounts section", async () => {
   assert.match(script, /id === "accounts"/);
 });
 
-test("admin.js calls admin-manage with the admin JWT via callFunction", async () => {
+test("admin.js routes admin-manage through the guarded JWT caller", async () => {
   const script = await readAdmin();
-  assert.match(script, /callFunction\("admin-manage"/);
-  assert.match(script, /getToken\(\)/);
+  assert.match(script, /createAdminCaller/);
+  assert.match(script, /getToken/);
 });
 
 test("admin.js has a create-account form calling the create-account action", async () => {
@@ -64,13 +64,12 @@ test("admin.js keeps incomplete account setup visible and wires explicit recover
   assert.match(script, /accountDetail\(res\.account\.user_id, res\.account\.email, res\.account\.name, res\)/);
 });
 
-// A stored access token expires after an hour, so the admin call has to
-// refresh first rather than reuse whatever is in localStorage.
-test("admin.js refreshes the access token before calling admin-manage", async () => {
+// A stored access token may still be valid. The admin caller should use it
+// first, then refresh only when the authenticated request is rejected.
+test("admin.js uses the guarded admin caller for admin-manage", async () => {
   const script = await readAdmin();
   assert.match(script, /refreshToken/);
-  assert.match(script, /await refreshToken\(\)/);
-  assert.doesNotMatch(script, /callFunction\("admin-manage", \{ action, \.\.\.body \}, getToken\(\)\)/);
+  assert.match(script, /createAdminCaller/);
 });
 
 // Butterbase's CORS allowlist permits only Content-Type and Authorization (plus
@@ -80,5 +79,5 @@ test("admin.js refreshes the access token before calling admin-manage", async ()
 test("admin.js sends the admin token as a bearer token, not a custom header", async () => {
   const script = await readAdmin();
   assert.doesNotMatch(script, /X-Admin-Token/);
-  assert.match(script, /callFunction\("admin-manage", \{ action, \.\.\.body \}, \(await refreshToken\(\)\)/);
+  assert.match(script, /createAdminCaller\(\{ getToken, refreshToken, callFunction \}\)/);
 });

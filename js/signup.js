@@ -2,7 +2,8 @@
 // 1. Collect name + email → send a 6-digit verification code via email
 // 2. User enters the code → verify + create/login account
 import { isLoggedIn, sendMagicLink, verifyMagicLink, claimEnrollments } from "./auth.js";
-import { getQueryParam } from "./api.js";
+import { getQueryParam, SITE_URL } from "./api.js";
+import { canonicalSiteUrl } from "./login-flow.js";
 
 const errEl = document.getElementById("auth-error");
 const infoEl = document.getElementById("auth-info");
@@ -24,7 +25,7 @@ let savedName = "";
 // Already logged in? Bounce to the return target (or account).
 if (isLoggedIn()) {
   const next = getQueryParam("next");
-  window.location.href = next || "account.html";
+  window.location.href = canonicalSiteUrl(next, SITE_URL);
 }
 
 function showError(msg) {
@@ -53,7 +54,7 @@ function switchToVerify() {
 async function finishSignup() {
   await claimEnrollments();
   const next = getQueryParam("next");
-  window.location.href = next || "account.html";
+  window.location.href = canonicalSiteUrl(next, SITE_URL);
 }
 
 // Resend the code

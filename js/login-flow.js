@@ -49,3 +49,13 @@ export function safeNextPath(candidate, fallback) {
     return fallback;
   }
 }
+
+export function canonicalSiteUrl(candidate, siteUrl = "https://olivistart.com") {
+  const path = safeNextPath(candidate, "account.html");
+  try {
+    const origin = new URL(siteUrl).origin;
+    return new URL(path, `${origin}/`).toString();
+  } catch {
+    return "https://olivistart.com/account.html";
+  }
+}
