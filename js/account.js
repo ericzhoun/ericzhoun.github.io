@@ -4,6 +4,7 @@ import { apiGet, apiGetByIds, callFunction, formatPrice, formatTime, getQueryPar
 import { isLoggedIn, getUser, isAdmin, logout, getToken, refreshToken, requireAuth, claimEnrollments } from "./auth.js";
 import { calculateStudentAge } from "./student-age.js";
 import { groupEnrollmentsByOrder } from "./enrollment-grouping.js";
+import { getContactValue } from "./account-profile.js";
 
 // Require login — redirect to login.html if not authenticated.
 const user = requireAuth();
@@ -31,6 +32,7 @@ const state = {
   // profile section state
   profileSaving: false,
   contactDraft: null,
+  profile: null,
   // change-password UI state
   pwStep: "idle", // "idle" | "code-sent" | "confirming"
   pwLoading: false,
@@ -464,15 +466,15 @@ function renderProfileTab() {
   // Contact info section
   root.appendChild(el("h3", "", "Contact Information"));
 
-  // Pull first enrollment's contact fields as initial values.
+  // Fall back to legacy enrollment fields when the parent has no durable profile yet.
   const en = state.enrollments[0] || {};
   const form = el("div", "profile-form");
 
   const fields = [
-    { key: "parent_name", label: "Parent / Guardian Name", value: (state.contactDraft?.parent_name ?? en.parent_name) || "" },
-    { key: "student_phone", label: "Phone", value: (state.contactDraft?.student_phone ?? en.student_phone) || "" },
-    { key: "emergency_contact", label: "Emergency Contact", value: (state.contactDraft?.emergency_contact ?? en.emergency_contact) || "" },
-    { key: "allergies", label: "Allergies / Notes", value: (state.contactDraft?.allergies ?? en.allergies) || "" },
+    { key: "parent_name", label: "Parent / Guardian Name" },
+    { key: "student_phone", label: "Phone" },
+    { key: "emergency_contact", label: "Emergency Contact" },
+    { key: "allergies", label: "Allergies / Notes" },
   ];
   fields.forEach((f) => {
     const label = el("label", "", f.label);
@@ -484,7 +486,11 @@ function renderProfileTab() {
       input.type = "text";
     }
     input.name = f.key;
-    input.value = f.value;
+    input.value = getContactValue({
+      draft: state.contactDraft,
+      profile: state.profile,
+      enrollment: en,
+    }, f.key);
     input.oninput = (event) => {
       state.contactDraft = { ...(state.contactDraft || {}), [f.key]: event.target.value };
     };
@@ -574,9 +580,11 @@ async function handleSaveContact() {
   render();
   try {
     const token = await refreshToken();
-    await callFunction("manage-account", { action: "update-contact", ...body }, token);
+    const result = await callFunction("manage-account", { action: "update-contact", ...body }, token);
+    state.contactDraft = null;
+    state.profile = result.profile || null;
     state.actionError = "";
-    await loadData(); // refresh enrollments to pick up updated values
+    await loadData(); // refresh enrollments and other compatibility data
   } catch (err) {
     showActionError(err.message);
   } finally {
@@ -1102,12 +1110,14 @@ async function loadData() {
       return;
     }
 
-    const [ens, bks] = await Promise.all([
+    const [ens, bks, profiles] = await Promise.all([
       apiGet("enrollments?order=created_at.desc", token),
       apiGet("bookings?order=booked_at.desc", token),
+      apiGet("parent_profiles?select=user_id,email,parent_name,student_phone,emergency_contact,allergies&limit=1", token),
     ]);
     state.enrollments = ens;
     state.bookings = bks;
+    state.profile = profiles[0] || null;
 
     const pending = state.enrollments.filter((e) => e.status === "pending" && e.id);
     refreshAfterClaims();
