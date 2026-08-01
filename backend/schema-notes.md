@@ -80,3 +80,18 @@ payload; the endpoint treats omitted tables as drops and refuses them without
   `update-student` (for any parent by `user_id`), `create-enrollment`
   (comped: `confirmed`, `total_paid_cents = 0`), `set-credits` (edits
   `num_classes_enrolled`). No schema change.
+
+## 2026-07-31 - parent profiles (migration_id 30; policy migrations 31-33)
+
+- New `parent_profiles` table is the durable parent identity and contact source
+  of truth. Columns: `user_id` (`uuid`, primary key, not null), `email` (`text`,
+  not null, unique), `parent_name` (`text`, not null), nullable text fields
+  `student_phone`, `emergency_contact`, and `allergies`, plus `created_at` and
+  `updated_at` (`timestamptz`, not null, default `now()`).
+- RLS user access is deliberately limited to SELECT, INSERT, and UPDATE. SELECT
+  uses `user_id = current_user_id()::uuid`; INSERT uses the same expression as
+  `WITH CHECK`; UPDATE uses it for both `USING` and `WITH CHECK`. End users have
+  no DELETE policy.
+- `parent_profiles_service_bypass` grants only `butterbase_service` all
+  operations with `USING (true) WITH CHECK (true)` for trusted administrative
+  and synchronization work.
