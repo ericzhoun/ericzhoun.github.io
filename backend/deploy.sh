@@ -17,6 +17,21 @@ if [[ -z "${BUTTERBASE_API_KEY:-}" ]]; then
   exit 1
 fi
 
+selected=("$@")
+deploying_admin_manage=false
+if [[ ${#selected[@]} -eq 0 ]]; then
+  deploying_admin_manage=true
+else
+  for selected_name in "${selected[@]}"; do
+    [[ "$selected_name" == "admin-manage" ]] && deploying_admin_manage=true
+  done
+fi
+
+if $deploying_admin_manage && [[ -z "${INVITATION_GMAIL_USER_ID:-}" ]]; then
+  echo "error: set INVITATION_GMAIL_USER_ID when deploying admin-manage" >&2
+  exit 1
+fi
+
 # name|auth|path|impersonation|description
 CONFIGS=(
   "guest-enroll|none|/guest-enroll|false|Guest checkout: unclaimed pending enrollment + Stripe Checkout session. Public endpoint; pricing computed server-side."
@@ -62,6 +77,7 @@ payload = {
         "SITE_URL": "https://olivistart.com",
         "SERVICE_KEY": os.environ["BUTTERBASE_API_KEY"],
         "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
+        "INVITATION_GMAIL_USER_ID": os.environ.get("INVITATION_GMAIL_USER_ID", ""),
     },
 }
 json.dump(payload, sys.stdout)
@@ -82,7 +98,6 @@ PY
   fi
 }
 
-selected=("$@")
 for cfg in "${CONFIGS[@]}"; do
   IFS='|' read -r name auth path impersonation desc <<<"$cfg"
   cron=""

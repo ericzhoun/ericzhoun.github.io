@@ -33,6 +33,23 @@ admin's behalf:
 BUTTERBASE_API_KEY=bb_sk_... GITHUB_TOKEN=github_pat_... ./backend/deploy.sh trigger-schedule-bake
 ```
 
+### Gmail sender for parent invitations
+
+Before first deploying `admin-manage`, enable the Gmail toolkit in Butterbase
+and connect `olivistastudio@gmail.com` through its OAuth flow. In the connected
+Gmail account settings, set the display name to `OliVista Art Studio`. Find the
+connected account's Butterbase user ID, then export it only in the shell used
+for the deployment:
+
+```bash
+export INVITATION_GMAIL_USER_ID=your_connected_butterbase_user_id
+BUTTERBASE_API_KEY=bb_sk_... ./backend/deploy.sh admin-manage
+```
+
+Do not commit the user ID, add it to frontend configuration, or store it in
+source files. `deploy.sh` sends it as encrypted function environment
+configuration for `admin-manage`.
+
 ## Checkout flows
 
 - Logged-in: `enroll-guard` (auth required) creates a pending enrollment for
