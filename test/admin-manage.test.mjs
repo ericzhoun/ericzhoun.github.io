@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { handler } from "../backend/functions/admin-manage.js";
 
 const ADMIN_EMAIL = "herfield8@gmail.com";
+const RECOVERY_USER_ID = "11111111-1111-4111-8111-111111111111";
 
 // The function is deployed with http auth "required", so the admin's JWT
 // arrives in Authorization (the only cross-origin header Butterbase's CORS
@@ -55,6 +56,7 @@ function stubFetch({ meEmail = ADMIN_EMAIL, meOk = true, respond = () => ({ body
       };
     }
     const result = respond(target, call) || {};
+    if (result.reject) throw result.reject;
     const ok = result.ok !== false;
     return {
       ok,
@@ -70,11 +72,18 @@ function stubFetch({ meEmail = ADMIN_EMAIL, meOk = true, respond = () => ({ body
 
 async function callHandler(target, stubOptions) {
   const restore = stubFetch(stubOptions);
+  const originalConsoleError = console.error;
+  const logs = [];
+  console.error = (...args) => logs.push(args);
   try {
     const res = await handler(target.req, target.ctx);
     res.calls = restore.calls;
+    res.logs = logs;
     return res;
-  } finally { restore(); }
+  } finally {
+    console.error = originalConsoleError;
+    restore();
+  }
 }
 
 const dataCalls = (res) => res.calls.filter((call) => call.url.includes("/v1/app_test/"));
@@ -191,6 +200,49 @@ test("create-account returns the durable account when welcome delivery fails", a
   assert.equal(res.status, 200);
   assert.equal((await res.json()).welcome_sent, false);
   assert.ok(res.calls.some((call) => call.url.endsWith("/parent_profiles")));
+});
+
+test("create-account returns structured recovery state when profile persistence is rejected", async () => {
+  const res = await callHandler(request({
+    action: "create-account", email: "parent@example.com", display_name: "Parent",
+  }), {
+    respond: (url) => {
+      if (url.includes("/signup")) return { body: { user: { id: RECOVERY_USER_ID } } };
+      if (url.endsWith("/parent_profiles")) return { ok: false, status: 503, body: { error: "data unavailable" } };
+      if (url.includes("/integrations/execute")) return { body: { successful: true } };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), {
+    account_exists: true,
+    account: { user_id: RECOVERY_USER_ID, email: "parent@example.com", name: "Parent" },
+    profile_saved: false,
+    code_sent: true,
+    welcome_sent: true,
+    recovery_required: true,
+  });
+  assert.equal(res.calls.some((call) => call.url.endsWith("/integrations/execute")), true);
+});
+
+test("create-account catches a rejected Gmail request after signup", async () => {
+  const res = await callHandler(request({
+    action: "create-account", email: "parent@example.com", display_name: "Parent",
+  }), {
+    respond: (url) => {
+      if (url.includes("/signup")) return { body: { user: { id: RECOVERY_USER_ID } } };
+      if (url.includes("/integrations/execute")) return { reject: new Error("network unavailable") };
+      return { body: { user_id: RECOVERY_USER_ID } };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.account_exists, true);
+  assert.equal(body.profile_saved, true);
+  assert.equal(body.welcome_sent, false);
+  assert.equal(body.recovery_required, true);
 });
 
 test("create-account maps a duplicate email to EMAIL_EXISTS 409", async () => {
@@ -392,6 +444,106 @@ test("resend-invitation returns 404 when the parent profile is absent", async ()
   assert.equal(res.status, 404);
   assert.equal(res.calls.some((call) => call.url.endsWith("/magic-link")), false);
   assert.equal(res.calls.some((call) => call.url.endsWith("/integrations/execute")), false);
+});
+
+// ---- account recovery ----
+
+test("recover-account creates a missing profile and resends both onboarding messages", async () => {
+  const res = await callHandler(request({
+    action: "recover-account",
+    user_id: RECOVERY_USER_ID,
+    email: " Parent@Example.com ",
+    parent_name: " Parent Name ",
+  }), {
+    respond: (url, call) => {
+      if (url.includes("parent_profiles?")) return { body: [] };
+      if (url.endsWith("/parent_profiles") && call.method === "POST") return { body: call.body };
+      if (url.endsWith("/magic-link")) return { body: { message: "sent" } };
+      if (url.endsWith("/integrations/execute")) return { body: { successful: true } };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), {
+    account_exists: true,
+    account: { user_id: RECOVERY_USER_ID, email: "parent@example.com", name: "Parent Name" },
+    profile_saved: true,
+    code_sent: true,
+    welcome_sent: true,
+    recovery_required: false,
+  });
+  const create = res.calls.find((call) => call.url.endsWith("/parent_profiles") && call.method === "POST");
+  assert.deepEqual(create.body, {
+    user_id: RECOVERY_USER_ID,
+    email: "parent@example.com",
+    parent_name: "Parent Name",
+  });
+});
+
+test("recover-account is idempotent when the profile already exists", async () => {
+  const res = await callHandler(request({
+    action: "recover-account",
+    user_id: RECOVERY_USER_ID,
+    email: "parent@example.com",
+    parent_name: "Parent Name",
+  }), {
+    respond: (url, call) => {
+      if (url.includes("parent_profiles?")) {
+        return { body: [{ user_id: RECOVERY_USER_ID, email: "parent@example.com", parent_name: "Parent Name" }] };
+      }
+      if (url.endsWith(`/parent_profiles/${RECOVERY_USER_ID}`) && call.method === "PATCH") return { body: call.body };
+      if (url.endsWith("/magic-link")) return { body: { message: "sent" } };
+      if (url.endsWith("/integrations/execute")) return { body: { successful: true } };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.calls.filter((call) => call.url.endsWith("/parent_profiles") && call.method === "POST").length, 0);
+  assert.equal(res.calls.filter((call) => call.url.endsWith(`/parent_profiles/${RECOVERY_USER_ID}`) && call.method === "PATCH").length, 1);
+  assert.equal(res.calls.filter((call) => call.url.endsWith("/magic-link")).length, 1);
+  assert.equal(res.calls.filter((call) => call.url.endsWith("/integrations/execute")).length, 1);
+});
+
+test("recover-account reports profile and delivery failures without hiding the existing account", async () => {
+  const res = await callHandler(request({
+    action: "recover-account",
+    user_id: RECOVERY_USER_ID,
+    email: "parent@example.com",
+    parent_name: "Parent Name",
+  }), {
+    respond: (url) => {
+      if (url.includes("parent_profiles?")) return { body: [] };
+      if (url.endsWith("/parent_profiles")) return { ok: false, status: 503, body: { error: "data unavailable" } };
+      if (url.endsWith("/magic-link")) return { ok: false, status: 503, body: { error: "auth unavailable" } };
+      if (url.endsWith("/integrations/execute")) return { reject: new Error("gmail unavailable") };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), {
+    account_exists: true,
+    account: { user_id: RECOVERY_USER_ID, email: "parent@example.com", name: "Parent Name" },
+    profile_saved: false,
+    code_sent: false,
+    welcome_sent: false,
+    recovery_required: true,
+  });
+});
+
+test("recover-account validates the recovery identity before any write", async () => {
+  const cases = [
+    { user_id: `${RECOVERY_USER_ID}/other`, email: "parent@example.com", parent_name: "Parent" },
+    { user_id: RECOVERY_USER_ID, email: "not-an-email", parent_name: "Parent" },
+    { user_id: RECOVERY_USER_ID, email: "parent@example.com", parent_name: "" },
+  ];
+  for (const candidate of cases) {
+    const res = await callHandler(request({ action: "recover-account", ...candidate }));
+    assert.equal(res.status, 400, JSON.stringify(candidate));
+    assert.equal(dataCalls(res).length, 0);
+  }
 });
 
 // ---- accounts listing ----

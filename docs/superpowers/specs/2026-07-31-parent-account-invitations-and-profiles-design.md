@@ -81,8 +81,11 @@ One durable row per auth user:
 | `created_at` | Creation timestamp |
 | `updated_at` | Last profile change timestamp |
 
-Parent-owned reads and writes are protected by user-isolation RLS on
-`user_id`. The service role has an explicit bypass policy for admin management.
+Parent-owned reads are protected by user-isolation RLS on `user_id`. End users
+have no direct INSERT, UPDATE, or DELETE policy. The verified `manage-account`
+function persists identity-bound profile changes with its server-only service
+credential. The service role has an explicit bypass policy for trusted profile
+management.
 
 No invitation-code table is required. Code generation, expiry, attempt limits,
 and verification remain entirely inside Butterbase auth.
@@ -144,9 +147,10 @@ profile form.
 - Admin account creation inserts the initial email and parent name.
 - The account page loads the parent's profile alongside enrollments, students,
   and bookings.
-- Saving the profile upserts the profile using `ctx.user.id` and the email from
-  the verified bearer token. The browser cannot choose a different profile
-  owner or account email.
+- Saving the profile re-verifies the bearer token against `/me`, requires its
+  user ID to match `ctx.user.id`, normalizes and validates the verified email,
+  then persists through server-only service access. The browser cannot choose
+  a different profile owner or account email.
 - Existing enrollment contact columns continue to be updated for compatibility
   with registration, attendance, and other existing views.
 - `list-accounts` starts with all profile rows, then aggregates student and

@@ -62,7 +62,12 @@ export async function handler(req, ctx) {
   // 4. Create a dynamic Stripe product with the correct total price
   const origin = new URL(req.url).origin;
   const authHeader = req.headers.get("authorization");
-  const apiKey = ctx.env.BUTTERBASE_API_KEY || "bb_sk_f13dbc117c3c7cb653e416dea8c706be7e800a9e";
+  const apiKey = ctx.env.BUTTERBASE_API_KEY;
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: "Billing service is not configured" }), {
+      status: 500, headers: { "Content-Type": "application/json" },
+    });
+  }
 
   const numClasses = num_classes_enrolled || 1;
   const perClass = price_per_class_cents || schedule.price_cents;
@@ -71,7 +76,7 @@ export async function handler(req, ctx) {
   const discountAmount = Math.round(subtotal * discount / 100);
   const total = subtotal - discountAmount;
 
-  const productName = `${schedule.program_name} — ${numClasses} class${numClasses > 1 ? "es" : ""}` +
+  const productName = `${schedule.program_name} - ${numClasses} class${numClasses > 1 ? "es" : ""}` +
     (discount > 0 ? ` (${discount}% early-bird)` : "");
 
   const productRes = await fetch(`${origin}/v1/${ctx.env.APP_ID}/billing/products`, {
@@ -83,7 +88,7 @@ export async function handler(req, ctx) {
     body: JSON.stringify({
       name: productName,
       priceCents: total,
-      description: `${schedule.program_name} art class — ${numClasses} × $${(perClass / 100).toFixed(2)}/class` +
+      description: `${schedule.program_name} art class - ${numClasses} × $${(perClass / 100).toFixed(2)}/class` +
         (discount > 0 ? `, ${discount}% early-bird discount` : ""),
       metadata: {
         enrollment_id: enrollmentId,

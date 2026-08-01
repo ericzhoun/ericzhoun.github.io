@@ -1,5 +1,11 @@
-import { adminApi, callFunction, formatPrice, formatTime, planCampBundleSync } from "./api.js";
-import { getOnboardingDeliveryMessage, replaceAdminNotice } from "./admin-account-messages.js";
+import { callFunction, formatPrice, formatTime, planCampBundleSync } from "./api.js";
+import { createAdminDataClient } from "./admin-data.js";
+import {
+  getAccountCreationMessage,
+  getOnboardingDeliveryMessage,
+  getRecoveryMessage,
+  replaceAdminNotice,
+} from "./admin-account-messages.js";
 import { createLatestEventListener } from "./admin-account-view-listener.js";
 import { getToken, getUser, isAdmin, logout, refreshToken } from "./auth.js";
 
@@ -22,11 +28,12 @@ const button = (label, action = "", cls = "btn btn-sm") => `<button class="${cls
 // then rejects the call at the edge before the function runs.
 const adminFn = async (action, body = {}) =>
   callFunction("admin-manage", { action, ...body }, (await refreshToken()) || getToken());
+const adminData = createAdminDataClient(adminFn);
 
 function notify(message) { notification = message; }
 function renderNotification() {
   if (!notification) return;
-  replaceAdminNotice(app, `<p class="admin-notice" role="status">✓ ${esc(notification)}</p>`);
+  replaceAdminNotice(app, `<p class="admin-notice" data-transient-notice role="status">✓ ${esc(notification)}</p>`);
   notification = "";
 }
 
@@ -53,13 +60,17 @@ function form(fields, values = {}, title = "Edit record") {
 }
 
 async function dashboard() {
-  const [programs, schedules, enrollments] = await Promise.all([adminApi("programs?select=id"), adminApi("class_schedules?select=id"), adminApi("enrollments?select=id")]);
+  const [programs, schedules, enrollments] = await Promise.all([
+    adminData.read("programs", { select: ["id"] }),
+    adminData.read("class_schedules", { select: ["id"] }),
+    adminData.read("enrollments", { select: ["id"] }),
+  ]);
   app.innerHTML = `<h1>Dashboard</h1><div class="stat-grid">${[[programs.length,"Programs","programs"],[schedules.length,"Class Schedules","schedules"],[enrollments.length,"Enrollments","enrollments"]].map(([n,l,id]) => `<a href="#${id}" class="stat-card"><span class="stat-number">${n}</span><span class="stat-label">${l}</span></a>`).join("")}</div><section class="dashboard-quick-links"><h2>Quick Actions</h2><div class="quick-link-grid"><a class="quick-link" href="#schedules"><h3>Manage Schedules →</h3><p>Add class times, prices, and capacity.</p></a><a class="quick-link" href="#programs"><h3>Manage Programs →</h3><p>Create or update art program types.</p></a><a class="quick-link" href="#enrollments"><h3>View Enrollments →</h3><p>Review students and payment status.</p></a></div></section>`;
 }
 const configs = {
-  programs: { title: "Programs", endpoint: "programs?order=sort_order.asc", fields: [], cols: ["name","program_type","num_classes","active"], labels: ["Name","Type","Classes","Active"] },
-  semesters: { title: "Semesters", endpoint: "semesters?order=start_date.desc", fields: [["name","Name"],["start_date","Start Date","date"],["end_date","End Date","date"]], cols: ["name","start_date","end_date","active"], labels: ["Name","Start","End","Active"] },
-  schedules: { title: "Class Schedules", endpoint: "class_schedules?order=created_at.desc", fields: [], cols: ["program_id","semester_id","day_of_week","session_type","start_time","age_group","price_cents","max_seats","active"], labels: ["Program","Semester","Day","Session","Start","Age","Price","Seats","Active"] },
+  programs: { title: "Programs", resource: "programs", query: { order: [{ field: "sort_order", direction: "asc" }] }, fields: [], cols: ["name","program_type","num_classes","active"], labels: ["Name","Type","Classes","Active"] },
+  semesters: { title: "Semesters", resource: "semesters", query: { order: [{ field: "start_date", direction: "desc" }] }, fields: [["name","Name"],["start_date","Start Date","date"],["end_date","End Date","date"]], cols: ["name","start_date","end_date","active"], labels: ["Name","Start","End","Active"] },
+  schedules: { title: "Class Schedules", resource: "class_schedules", query: { order: [{ field: "created_at", direction: "desc" }] }, fields: [], cols: ["program_id","semester_id","day_of_week","session_type","start_time","age_group","price_cents","max_seats","active"], labels: ["Program","Semester","Day","Session","Start","Age","Price","Seats","Active"] },
 };
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const SESSION_TYPES = {
@@ -126,9 +137,9 @@ function programForm(values, title) {
 async function crud(id) {
   const c = configs[id];
   const [items, programs, semesters] = await Promise.all([
-    adminApi(c.endpoint),
-    id === "schedules" ? adminApi("programs?order=sort_order.asc") : Promise.resolve([]),
-    id === "schedules" ? adminApi("semesters?order=start_date.desc") : Promise.resolve([]),
+    adminData.read(c.resource, c.query),
+    id === "schedules" ? adminData.read("programs", { order: [{ field: "sort_order", direction: "asc" }] }) : Promise.resolve([]),
+    id === "schedules" ? adminData.read("semesters", { order: [{ field: "start_date", direction: "desc" }] }) : Promise.resolve([]),
   ]);
   const displayValue = (item, key) => {
     if (id === "schedules" && key === "program_id") return programs.find((p) => p.id === item.program_id)?.name || "-";
@@ -167,7 +178,7 @@ async function crud(id) {
       e.target.disabled = true;
       e.target.textContent = "Publishing…";
       try {
-        await adminApi("fn/trigger-schedule-bake", { method: "POST", body: {} });
+        await adminFn("publish-schedule");
         notify("Schedule publish triggered. schedule.html will update in about a minute.");
       } catch (error) {
         alert(error.message || "Could not trigger the schedule publish.");
@@ -190,7 +201,10 @@ async function crud(id) {
       const item = items.find((x) => String(x.id) === action.slice(5));
       if (id === "programs") {
         const campDays = item.program_type === "camp"
-          ? [...new Set((await adminApi(`class_schedules?program_id=eq.${item.id}&active=eq.true`)).map((row) => row.day_of_week))]
+          ? [...new Set((await adminData.read("class_schedules", { filters: [
+            { field: "program_id", operator: "eq", value: item.id },
+            { field: "active", operator: "eq", value: true },
+          ] })).map((row) => row.day_of_week))]
           : [];
         document.querySelector("#form-slot").innerHTML = programForm({ ...item, campDays }, "Edit Program");
       } else {
@@ -199,10 +213,10 @@ async function crud(id) {
       bindForm(item.id);
     } else if (action.startsWith("delete-group:") && confirm("Delete these class schedules?")) {
       const ids = action.slice("delete-group:".length).split(",");
-      await Promise.all(ids.map((scheduleId) => adminApi(`class_schedules/${scheduleId}`, { method: "DELETE" })));
+      await Promise.all(ids.map((scheduleId) => adminData.remove("class_schedules", scheduleId)));
       render();
     } else if (action.startsWith("delete:") && confirm(`Delete this ${c.title.slice(0,-1).toLowerCase()}?`)) {
-      await adminApi(`${id === "schedules" ? "class_schedules" : id}/${action.slice(7)}`, { method: "DELETE" });
+      await adminData.remove(id === "schedules" ? "class_schedules" : id, action.slice(7));
       render();
     }
   }
@@ -258,19 +272,20 @@ async function crud(id) {
             const existingByDay = new Map(existingSchedules.map((schedule) => [schedule.day_of_week, schedule]));
             const selectedDays = new Set(days);
             await Promise.all([
-              ...existingSchedules.map((schedule) => adminApi(`class_schedules/${schedule.id}`, {
-                method: "PATCH",
-                body: { ...body, day_of_week: schedule.day_of_week, active: body.active && selectedDays.has(schedule.day_of_week) },
-              })),
+              ...existingSchedules.map((schedule) => adminData.update(
+                "class_schedules",
+                schedule.id,
+                { ...body, day_of_week: schedule.day_of_week, active: body.active && selectedDays.has(schedule.day_of_week) },
+              )),
               ...days.map((day_of_week) => {
                 const existing = existingByDay.get(day_of_week);
                 return existing
                   ? Promise.resolve()
-                  : adminApi("class_schedules", { method: "POST", body: { ...body, day_of_week } });
+                  : adminData.create("class_schedules", { ...body, day_of_week });
               }),
             ]);
           } else {
-            await Promise.all(days.map((day_of_week) => adminApi("class_schedules", { method: "POST", body: { ...body, day_of_week } })));
+            await Promise.all(days.map((day_of_week) => adminData.create("class_schedules", { ...body, day_of_week })));
           }
         } else if (id === "programs") {
           const isCamp = body.program_type === "camp";
@@ -280,18 +295,20 @@ async function crud(id) {
             body.num_classes = campDays.length;
           }
           delete body.camp_days;
-          await adminApi(`programs${editId ? `/${editId}` : ""}`, { method: editId ? "PATCH" : "POST", body });
+          await (editId ? adminData.update("programs", editId, body) : adminData.create("programs", body));
           if (isCamp && editId) {
-            const allRows = await adminApi(`class_schedules?program_id=eq.${editId}`);
+            const allRows = await adminData.read("class_schedules", {
+              filters: [{ field: "program_id", operator: "eq", value: editId }],
+            });
             const plans = planCampBundleSync(allRows, campDays);
             await Promise.all(plans.flatMap((plan) => [
-              ...plan.deactivateIds.map((rowId) => adminApi(`class_schedules/${rowId}`, { method: "PATCH", body: { active: false } })),
-              ...plan.reactivateIds.map((rowId) => adminApi(`class_schedules/${rowId}`, { method: "PATCH", body: { active: true } })),
-              ...plan.createRows.map((row) => adminApi("class_schedules", { method: "POST", body: row })),
+              ...plan.deactivateIds.map((rowId) => adminData.update("class_schedules", rowId, { active: false })),
+              ...plan.reactivateIds.map((rowId) => adminData.update("class_schedules", rowId, { active: true })),
+              ...plan.createRows.map((row) => adminData.create("class_schedules", row)),
             ]));
           }
         } else {
-          await adminApi(`${id}${editId ? `/${editId}` : ""}`, { method: editId ? "PATCH" : "POST", body });
+          await (editId ? adminData.update(id, editId, body) : adminData.create(id, body));
         }
         notify(editId ? `${c.title.slice(0, -1)} saved.` : `${c.title.slice(0, -1)} created.`);
         render();
@@ -305,7 +322,7 @@ async function crud(id) {
   }
 }
 async function enrollments() {
-  const items = await adminApi("enrollments?order=created_at.desc");
+  const items = await adminData.read("enrollments", { order: [{ field: "created_at", direction: "desc" }] });
   const rows = items.map((enrollment) => {
     const customerName = enrollment.parent_name || enrollment.customer_name || "Not provided";
     return `<tr><td>${esc(enrollment.student_name)}</td><td>${esc(customerName)}</td><td>${esc(enrollment.student_email)}</td><td><span class="status-badge status-${enrollment.status}">${esc(enrollment.status)}</span></td><td>${date(enrollment.created_at)}</td><td>${enrollment.status === "pending" ? button("Confirm", `confirm:${enrollment.id}`) : ""} ${["pending", "confirmed"].includes(enrollment.status) ? button("Cancel", `cancel:${enrollment.id}`, "btn btn-sm btn-danger") : ""}</td></tr>`;
@@ -314,19 +331,28 @@ async function enrollments() {
   app.addEventListener("click", async (event) => {
     const action = event.target.dataset.action || "";
     if (!action.startsWith("confirm:") && !action.startsWith("cancel:")) return;
-    await adminApi(`enrollments/${action.slice(8)}`, {
-      method: "PATCH",
-      body: { status: action.startsWith("confirm:") ? "confirmed" : "cancelled" },
+    await adminData.update("enrollments", action.slice(8), {
+      status: action.startsWith("confirm:") ? "confirmed" : "cancelled",
     });
     render();
   }, { once: true });
 }
-async function students() { const items = await adminApi("enrollments?order=created_at.desc"); const map = new Map(); items.forEach((e) => { const key = e.student_email || e.student_name; const s = map.get(key) || { name: e.student_name, email: e.student_email, phone: e.student_phone, total: 0, confirmed: 0, pending: 0, last: e.created_at }; s.total++; if (e.status === "confirmed") s.confirmed++; if (e.status === "pending") s.pending++; map.set(key, s); }); app.innerHTML = `<h1>Students</h1>${table(["Name","Email","Phone","Total","Confirmed","Pending","Last Active"], [...map.values()].map((s) => `<tr><td>${esc(s.name)}</td><td>${esc(s.email)}</td><td>${esc(s.phone || "-")}</td><td>${s.total}</td><td>${s.confirmed}</td><td>${s.pending}</td><td>${date(s.last)}</td></tr>`).join(""))}`; }
+async function students() { const items = await adminData.read("enrollments", { order: [{ field: "created_at", direction: "desc" }] }); const map = new Map(); items.forEach((e) => { const key = e.student_email || e.student_name; const s = map.get(key) || { name: e.student_name, email: e.student_email, phone: e.student_phone, total: 0, confirmed: 0, pending: 0, last: e.created_at }; s.total++; if (e.status === "confirmed") s.confirmed++; if (e.status === "pending") s.pending++; map.set(key, s); }); app.innerHTML = `<h1>Students</h1>${table(["Name","Email","Phone","Total","Confirmed","Pending","Last Active"], [...map.values()].map((s) => `<tr><td>${esc(s.name)}</td><td>${esc(s.email)}</td><td>${esc(s.phone || "-")}</td><td>${s.total}</td><td>${s.confirmed}</td><td>${s.pending}</td><td>${date(s.last)}</td></tr>`).join(""))}`; }
 async function sessions() {
-  const [items, schedules, programs] = await Promise.all([adminApi("class_sessions?order=class_date.asc&limit=200"), adminApi("class_schedules"), adminApi("programs")]);
+  const [items, schedules, programs] = await Promise.all([
+    adminData.read("class_sessions", { order: [{ field: "class_date", direction: "asc" }], limit: 200 }),
+    adminData.read("class_schedules"),
+    adminData.read("programs"),
+  ]);
   const sessionIds = items.map((session) => session.id).filter(Boolean);
   const attendedBookings = sessionIds.length
-    ? await adminApi(`bookings?status=eq.attended&session_id=in.(${sessionIds.join(",")})&select=session_id`)
+    ? await adminData.read("bookings", {
+      select: ["session_id"],
+      filters: [
+        { field: "status", operator: "eq", value: "attended" },
+        { field: "session_id", operator: "in", value: sessionIds },
+      ],
+    })
     : [];
   const attendedSessionIds = new Set(attendedBookings.map((booking) => booking.session_id));
   const now = new Date();
@@ -357,17 +383,24 @@ async function sessions() {
 
 async function attendance(sessionId) {
   const [sessionRows, bookings] = await Promise.all([
-    adminApi(`class_sessions?id=eq.${sessionId}`),
-    adminApi(`bookings?session_id=eq.${sessionId}&order=booked_at.asc`),
+    adminData.read("class_sessions", { filters: [{ field: "id", operator: "eq", value: sessionId }] }),
+    adminData.read("bookings", {
+      filters: [{ field: "session_id", operator: "eq", value: sessionId }],
+      order: [{ field: "booked_at", direction: "asc" }],
+    }),
   ]);
   const session = sessionRows[0];
   if (!session) throw new Error("Session not found.");
   const [scheduleRows, enrollmentResults] = await Promise.all([
-    adminApi(`class_schedules?id=eq.${session.schedule_id}`),
-    Promise.all([...new Set(bookings.map((booking) => booking.enrollment_id))].map((id) => adminApi(`enrollments?id=eq.${id}`))),
+    adminData.read("class_schedules", { filters: [{ field: "id", operator: "eq", value: session.schedule_id }] }),
+    Promise.all([...new Set(bookings.map((booking) => booking.enrollment_id))].map((id) => (
+      adminData.read("enrollments", { filters: [{ field: "id", operator: "eq", value: id }] })
+    ))),
   ]);
   const schedule = scheduleRows[0];
-  const programRows = schedule ? await adminApi(`programs?id=eq.${schedule.program_id}`) : [];
+  const programRows = schedule ? await adminData.read("programs", {
+    filters: [{ field: "id", operator: "eq", value: schedule.program_id }],
+  }) : [];
   const enrollments = enrollmentResults.flat();
   const enrollmentFor = (id) => enrollments.find((enrollment) => enrollment.id === id);
   const activeBookings = bookings.filter((booking) => ["scheduled", "attended", "no_show"].includes(booking.status));
@@ -386,7 +419,7 @@ async function attendance(sessionId) {
     const [, bookingId, status] = action.split(":");
     event.target.disabled = true;
     try {
-      await adminApi("fn/mark-attendance", { method: "POST", body: { booking_id: bookingId, status } });
+      await adminFn("mark-attendance", { booking_id: bookingId, status });
       await attendance(sessionId);
     } catch (error) {
       event.target.disabled = false;
@@ -434,10 +467,8 @@ function renderNewAccountForm() {
     const data = Object.fromEntries(new FormData(e.currentTarget));
     try {
       const res = await adminFn("create-account", { email: data.email, display_name: data.display_name });
-      notify(res.welcome_sent
-        ? "Account created and welcome email sent."
-        : "Account created, but the welcome email could not be sent. Resend onboarding emails.");
-      await accountDetail(res.account.user_id, res.account.email, res.account.name);
+      notify(getAccountCreationMessage(res));
+      await accountDetail(res.account.user_id, res.account.email, res.account.name, res);
     } catch (error) {
       errorEl.textContent = error.code === "EMAIL_EXISTS"
         ? "An account with this email already exists."
@@ -448,12 +479,21 @@ function renderNewAccountForm() {
   });
 }
 
-async function accountDetail(userId, email, name) {
+async function accountDetail(userId, email, name, accountState = null) {
   const [students, enrollments, schedules, programs] = await Promise.all([
-    adminApi(`students?user_id=eq.${userId}&order=created_at.desc`),
-    adminApi(`enrollments?user_id=eq.${userId}&order=created_at.desc`),
-    adminApi("class_schedules?active=eq.true&order=created_at.desc"),
-    adminApi("programs?order=sort_order.asc"),
+    adminData.read("students", {
+      filters: [{ field: "user_id", operator: "eq", value: userId }],
+      order: [{ field: "created_at", direction: "desc" }],
+    }),
+    adminData.read("enrollments", {
+      filters: [{ field: "user_id", operator: "eq", value: userId }],
+      order: [{ field: "created_at", direction: "desc" }],
+    }),
+    adminData.read("class_schedules", {
+      filters: [{ field: "active", operator: "eq", value: true }],
+      order: [{ field: "created_at", direction: "desc" }],
+    }),
+    adminData.read("programs", { order: [{ field: "sort_order", direction: "asc" }] }),
   ]);
   const programName = (id) => programs.find((p) => p.id === id)?.name || "-";
   const scheduleLabel = (s) => `${programName(s.program_id)} - ${s.day_of_week} ${formatTime(s.start_time)} (${s.age_group})`;
@@ -472,10 +512,18 @@ async function accountDetail(userId, email, name) {
   }).join("");
   const studentOptions = students.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
   const scheduleOptions = schedules.map((s) => `<option value="${esc(s.id)}">${esc(scheduleLabel(s))}</option>`).join("");
+  const needsProfileRecovery = accountState?.profile_saved === false;
+  const onboardingLabel = needsProfileRecovery
+    ? "Complete setup and resend onboarding"
+    : "Resend onboarding emails";
+  const recoveryNotice = needsProfileRecovery
+    ? `<p class="admin-notice" role="status">This account exists, but its profile setup is incomplete. Complete setup here instead of creating the account again.</p>`
+    : "";
 
   app.innerHTML = `<div class="admin-crud-header">
-      <h1>${esc(name || email || "Parent")}</h1><div class="admin-header-actions">${button("Resend onboarding emails", "resend-onboarding", "btn btn-sm btn-secondary")}${button("← Back to Accounts", "back-to-accounts")}</div></div>
+      <h1>${esc(name || email || "Parent")}</h1><div class="admin-header-actions">${button(onboardingLabel, "resend-onboarding", "btn btn-sm btn-secondary")}${button("← Back to Accounts", "back-to-accounts")}</div></div>
     <p class="muted">${esc(email || "")}</p>
+    ${recoveryNotice}
     <div id="form-slot"></div>
     <section><div class="admin-crud-header"><h2>Students</h2>${button("+ Add student", "add-student-form")}</div>
       ${table(["Name", "Age", "DOB", "Actions"], studentRows)}</section>
@@ -489,7 +537,7 @@ async function accountDetail(userId, email, name) {
   function bindFormEl(onSubmit) {
     const formEl = document.querySelector("#record-form");
     const errorEl = formEl.querySelector("#form-error");
-    formEl.querySelector('[data-action="cancel-form"]').addEventListener("click", () => accountDetail(userId, email, name));
+    formEl.querySelector('[data-action="cancel-form"]').addEventListener("click", () => accountDetail(userId, email, name, accountState));
     formEl.addEventListener("submit", async (e) => {
       e.preventDefault();
       const saveButton = formEl.querySelector("[data-save-button]");
@@ -510,16 +558,26 @@ async function accountDetail(userId, email, name) {
     if (action === "resend-onboarding") {
       const resendButton = event.target;
       resendButton.disabled = true;
-      resendButton.textContent = "Resending…";
+      resendButton.textContent = needsProfileRecovery ? "Completing setup…" : "Resending…";
       try {
-        const result = await adminFn("resend-invitation", { user_id: userId });
-        notify(getOnboardingDeliveryMessage(result));
-        renderNotification();
+        if (needsProfileRecovery) {
+          const result = await adminFn("recover-account", {
+            user_id: userId,
+            email,
+            parent_name: name || email,
+          });
+          notify(getRecoveryMessage(result));
+          await accountDetail(userId, email, name, result);
+        } else {
+          const result = await adminFn("resend-invitation", { user_id: userId });
+          notify(getOnboardingDeliveryMessage(result));
+          renderNotification();
+        }
       } catch (error) {
         alert(error.message || "Could not resend onboarding emails.");
       } finally {
         resendButton.disabled = false;
-        resendButton.textContent = "Resend onboarding emails";
+        resendButton.textContent = onboardingLabel;
       }
       return;
     }

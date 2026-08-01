@@ -168,3 +168,7 @@ test("contact page provides an accessible, responsive studio location map", asyn
   assert.match(css, /\.contact-map\s*\{[\s\S]*?width:\s*100%[\s\S]*?min-height:\s*360px/);
   assert.match(css, /@media \(max-width: 600px\)\s*\{[\s\S]*?\.contact-map\s*\{[\s\S]*?min-height:\s*280px/s);
 });
+
+test("account source follows the plain-hyphen copy policy", async () => {
+  assert.doesNotMatch(await read("js/account.js"), /—/);
+});

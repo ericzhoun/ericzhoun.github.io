@@ -1,4 +1,4 @@
-// Account page — enrollments, credits, upcoming classes, make-up booking.
+// Account page - enrollments, credits, upcoming classes, make-up booking.
 // Ported from herfield app/account/AccountPageClient.js, compiled to vanilla JS.
 import { apiGet, apiGetByIds, callFunction, formatPrice, formatTime, getQueryParam, compareDayOfWeek } from "./api.js";
 import { isLoggedIn, getUser, isAdmin, logout, getToken, refreshToken, requireAuth, claimEnrollments } from "./auth.js";
@@ -6,7 +6,7 @@ import { calculateStudentAge } from "./student-age.js";
 import { groupEnrollmentsByOrder } from "./enrollment-grouping.js";
 import { getContactValue } from "./account-profile.js";
 
-// Require login — redirect to login.html if not authenticated.
+// Require login - redirect to login.html if not authenticated.
 const user = requireAuth();
 
 if (user) {
@@ -281,7 +281,7 @@ function renderEnrollmentDayDetail(en) {
     frag.appendChild(credit);
   } else if (en.status === "pending") {
     frag.appendChild(el("p", "muted",
-      "Payment pending — credits will be available once payment is confirmed."));
+      "Payment pending - credits will be available once payment is confirmed."));
   } else {
     frag.appendChild(el("p", "muted", "This enrollment was cancelled."));
   }
@@ -793,7 +793,7 @@ function renderArtworkTab() {
     return;
   }
 
-  // Student artwork gallery — one gallery per student.
+  // Student artwork gallery - one gallery per student.
   state.students.forEach((student) => {
     const photos = state.artworkPhotos.filter((p) => p.student_id === student.id);
     const gallery = el("div", "artwork-gallery");
@@ -963,7 +963,7 @@ async function handleBookMakeup(enrollmentId, sessionId) {
 }
 
 async function doBookAction(action, enrollmentId, sessionId) {
-  // optimistic: disable nothing globally — just reload on success/failure
+  // optimistic: disable nothing globally - just reload on success/failure
   try {
     const token = getToken();
     await callFunction("book-class", {

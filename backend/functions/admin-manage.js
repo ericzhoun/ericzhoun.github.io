@@ -42,10 +42,19 @@ export async function handler(req, ctx) {
         return await listAccounts(ctx);
       case "resend-invitation":
         return await resendInvitation(ctx, body);
+      case "recover-account":
+        return await recoverAccount(ctx, body);
+      case "admin-data":
+        return await adminData(ctx, body);
+      case "publish-schedule":
+        return await publishSchedule(ctx, body);
+      case "mark-attendance":
+        return await markAttendance(ctx, body);
       default:
         return json({ error: "Unknown action" }, 400);
     }
   } catch (error) {
+    if (error && error.status === 400) return json({ error: error.message }, 400);
     if (error && error.status === 404) return json({ error: "Record not found" }, 404);
     console.error("admin-manage action failed:", body.action, error && error.message);
     return json({ error: "Something went wrong. Please try again." }, 502);
@@ -97,7 +106,273 @@ async function data(ctx, path, options = {}) {
     error.status = res.status;
     throw error;
   }
+  if ((options.method || "GET") === "DELETE" || res.status === 204) return true;
   return res.json();
+}
+
+async function serviceFunction(ctx, name, body) {
+  const res = await fetch(`${apiBase(ctx)}/v1/${ctx.env.BUTTERBASE_APP_ID}/fn/${name}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ctx.env.SERVICE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const result = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const error = new Error((result.error && result.error.message) || result.error || `Function error ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  return result;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DAY_VALUES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const STATUS_VALUES = ["pending", "confirmed", "cancelled"];
+
+const ADMIN_DATA_RESOURCES = {
+  programs: {
+    read: ["id", "name", "slug", "description", "image_url", "sort_order", "num_classes", "active", "program_type", "created_at", "updated_at"],
+    filters: { id: "uuid", active: "boolean" },
+    order: ["sort_order", "created_at"],
+    create: {
+      name: "text", slug: "slug", description: "nullableText", image_url: "nullableText",
+      sort_order: "integer", num_classes: "nonNegativeInteger", active: "boolean",
+      program_type: ["class", "camp"],
+    },
+    update: {
+      name: "text", slug: "slug", description: "nullableText", image_url: "nullableText",
+      sort_order: "integer", num_classes: "nonNegativeInteger", active: "boolean",
+      program_type: ["class", "camp"],
+    },
+    delete: true,
+  },
+  semesters: {
+    read: ["id", "name", "start_date", "end_date", "active", "created_at", "updated_at"],
+    filters: { id: "uuid", active: "boolean" },
+    order: ["start_date", "created_at"],
+    create: { name: "text", start_date: "nullableDate", end_date: "nullableDate", active: "boolean" },
+    update: { name: "text", start_date: "nullableDate", end_date: "nullableDate", active: "boolean" },
+    delete: true,
+  },
+  class_schedules: {
+    read: [
+      "id", "program_id", "semester_id", "day_of_week", "session_type", "start_time",
+      "end_time", "age_group", "price_cents", "max_seats", "notes", "active", "created_at", "updated_at",
+    ],
+    filters: { id: "uuid", program_id: "uuid", semester_id: "uuid", active: "boolean" },
+    order: ["created_at", "day_of_week", "start_time"],
+    create: {
+      program_id: "uuid", semester_id: "uuid", day_of_week: DAY_VALUES,
+      session_type: ["standard", "extended", "full"], start_time: "time", end_time: "time",
+      age_group: "text", price_cents: "nonNegativeInteger", max_seats: "positiveInteger",
+      notes: "nullableText", active: "boolean",
+    },
+    update: {
+      program_id: "uuid", semester_id: "uuid", day_of_week: DAY_VALUES,
+      session_type: ["standard", "extended", "full"], start_time: "time", end_time: "time",
+      age_group: "text", price_cents: "nonNegativeInteger", max_seats: "positiveInteger",
+      notes: "nullableText", active: "boolean",
+    },
+    delete: true,
+  },
+  enrollments: {
+    read: [
+      "id", "user_id", "student_id", "schedule_id", "student_name", "student_email",
+      "student_phone", "parent_name", "customer_name", "status", "num_classes_enrolled",
+      "created_at", "updated_at",
+    ],
+    filters: { id: "uuid", user_id: "uuid" },
+    order: ["created_at"],
+    update: { status: STATUS_VALUES },
+  },
+  class_sessions: {
+    read: ["id", "schedule_id", "class_date", "status", "created_at", "updated_at"],
+    filters: { id: "uuid" },
+    order: ["class_date"],
+  },
+  bookings: {
+    read: ["id", "enrollment_id", "session_id", "status", "type", "booked_at", "created_at", "updated_at"],
+    filters: { status: ["scheduled", "attended", "no_show", "skipped", "cancelled"], session_id: "uuid" },
+    order: ["booked_at"],
+  },
+  students: {
+    read: ["id", "user_id", "name", "age", "dob", "notes", "created_at", "updated_at"],
+    filters: { user_id: "uuid" },
+    order: ["created_at"],
+  },
+};
+
+async function adminData(ctx, body) {
+  assertOnlyKeys(body, ["action", "operation", "resource", "query", "id", "fields"]);
+  const operation = str(body.operation);
+  const resource = str(body.resource);
+  const policy = resource && ADMIN_DATA_RESOURCES[resource];
+  if (!policy) throw requestError("Resource is not allowed");
+  if (!operation || !["read", "create", "update", "delete"].includes(operation)) {
+    throw requestError("Operation is not allowed");
+  }
+
+  if (operation === "read") {
+    if (body.id !== undefined || body.fields !== undefined) throw requestError("Read request is invalid");
+    const query = buildAdminQuery(policy, body.query);
+    const result = await data(ctx, `${resource}${query ? `?${query}` : ""}`);
+    return json({ rows: rows(result) }, 200);
+  }
+
+  if (body.query !== undefined) throw requestError("Write request is invalid");
+  if (operation === "create") {
+    if (!policy.create || body.id !== undefined) throw requestError("Create is not allowed for this resource");
+    const fields = validateAdminFields(body.fields, policy.create);
+    return json({ rows: rows(await data(ctx, resource, { method: "POST", body: fields })) }, 200);
+  }
+
+  const id = validateUuid(body.id, "Record id");
+  if (operation === "update") {
+    if (!policy.update) throw requestError("Update is not allowed for this resource");
+    const fields = validateAdminFields(body.fields, policy.update);
+    return json({ rows: rows(await data(ctx, `${resource}/${id}`, { method: "PATCH", body: fields })) }, 200);
+  }
+
+  if (!policy.delete || body.fields !== undefined) throw requestError("Delete is not allowed for this resource");
+  await data(ctx, `${resource}/${id}`, { method: "DELETE" });
+  return json({ deleted: true }, 200);
+}
+
+async function publishSchedule(ctx, body) {
+  assertOnlyKeys(body, ["action"]);
+  return json(await serviceFunction(ctx, "trigger-schedule-bake", {}), 200);
+}
+
+async function markAttendance(ctx, body) {
+  assertOnlyKeys(body, ["action", "booking_id", "status"]);
+  const bookingId = validateUuid(body.booking_id, "Booking id");
+  if (!["attended", "no_show"].includes(body.status)) throw requestError("Attendance status is invalid");
+  return json(await serviceFunction(ctx, "mark-attendance", {
+    booking_id: bookingId,
+    status: body.status,
+  }), 200);
+}
+
+function buildAdminQuery(policy, candidate) {
+  if (candidate === undefined) return "";
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw requestError("Query is invalid");
+  assertOnlyKeys(candidate, ["select", "order", "filters", "limit"]);
+  const params = new URLSearchParams();
+
+  if (candidate.select !== undefined) {
+    if (!Array.isArray(candidate.select) || candidate.select.length === 0) throw requestError("Select is invalid");
+    const selected = candidate.select.map((field) => str(field));
+    if (selected.some((field) => !field || !policy.read.includes(field))) throw requestError("Select field is not allowed");
+    params.set("select", [...new Set(selected)].join(","));
+  }
+
+  if (candidate.order !== undefined) {
+    if (!Array.isArray(candidate.order) || candidate.order.length === 0 || candidate.order.length > 3) {
+      throw requestError("Order is invalid");
+    }
+    const order = candidate.order.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) throw requestError("Order is invalid");
+      assertOnlyKeys(item, ["field", "direction"]);
+      const field = str(item.field);
+      const direction = str(item.direction);
+      if (!field || !policy.order.includes(field) || !["asc", "desc"].includes(direction)) {
+        throw requestError("Order is not allowed");
+      }
+      return `${field}.${direction}`;
+    });
+    params.set("order", order.join(","));
+  }
+
+  if (candidate.filters !== undefined) {
+    if (!Array.isArray(candidate.filters) || candidate.filters.length > 20) throw requestError("Filters are invalid");
+    for (const filter of candidate.filters) {
+      if (!filter || typeof filter !== "object" || Array.isArray(filter)) throw requestError("Filter is invalid");
+      assertOnlyKeys(filter, ["field", "operator", "value"]);
+      const field = str(filter.field);
+      const operator = str(filter.operator);
+      const validator = field && policy.filters[field];
+      if (!validator || !["eq", "in"].includes(operator)) throw requestError("Filter is not allowed");
+      if (operator === "in") {
+        if (!Array.isArray(filter.value) || filter.value.length === 0 || filter.value.length > 200) {
+          throw requestError("Filter values are invalid");
+        }
+        const values = filter.value.map((value) => validateAdminValue(value, validator, field));
+        params.append(field, `in.(${values.join(",")})`);
+      } else {
+        params.append(field, `eq.${validateAdminValue(filter.value, validator, field)}`);
+      }
+    }
+  }
+
+  if (candidate.limit !== undefined) {
+    if (!Number.isInteger(candidate.limit) || candidate.limit < 1 || candidate.limit > 500) {
+      throw requestError("Limit is invalid");
+    }
+    params.set("limit", String(candidate.limit));
+  }
+  return params.toString();
+}
+
+function validateAdminFields(candidate, policy) {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw requestError("Fields are required");
+  const keys = Object.keys(candidate);
+  if (keys.length === 0) throw requestError("Fields are required");
+  for (const key of keys) {
+    if (!Object.hasOwn(policy, key)) throw requestError(`Field is not allowed: ${key}`);
+  }
+  return Object.fromEntries(keys.map((key) => [key, validateAdminValue(candidate[key], policy[key], key)]));
+}
+
+function validateAdminValue(value, validator, label) {
+  if (Array.isArray(validator)) {
+    if (!validator.includes(value)) throw requestError(`${label} is invalid`);
+    return value;
+  }
+  if (validator === "uuid") return validateUuid(value, label);
+  if (validator === "boolean") {
+    if (typeof value !== "boolean") throw requestError(`${label} must be boolean`);
+    return value;
+  }
+  if (["integer", "nonNegativeInteger", "positiveInteger"].includes(validator)) {
+    if (!Number.isInteger(value)) throw requestError(`${label} must be an integer`);
+    if (validator === "nonNegativeInteger" && value < 0) throw requestError(`${label} must not be negative`);
+    if (validator === "positiveInteger" && value < 1) throw requestError(`${label} must be positive`);
+    return value;
+  }
+  if (validator === "nullableText" && value === null) return null;
+  if (validator === "nullableDate" && value === null) return null;
+  if (typeof value !== "string") throw requestError(`${label} must be text`);
+  const valueText = value.trim();
+  if (!valueText || valueText.length > 4000) throw requestError(`${label} is invalid`);
+  if (validator === "slug" && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(valueText)) throw requestError(`${label} is invalid`);
+  if ((validator === "nullableDate" || validator === "date") && !/^\d{4}-\d{2}-\d{2}$/.test(valueText)) {
+    throw requestError(`${label} is invalid`);
+  }
+  if (validator === "time" && !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(valueText)) {
+    throw requestError(`${label} is invalid`);
+  }
+  return valueText;
+}
+
+function validateUuid(value, label) {
+  const id = str(value);
+  if (!id || !UUID_PATTERN.test(id)) throw requestError(`${label} is invalid`);
+  return id;
+}
+
+function assertOnlyKeys(candidate, allowed) {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw requestError("Request is invalid");
+  const extra = Object.keys(candidate).find((key) => !allowed.includes(key));
+  if (extra) throw requestError(`Field is not allowed: ${extra}`);
+}
+
+function requestError(message) {
+  const error = new Error(message);
+  error.status = 400;
+  return error;
 }
 
 const rows = (result) => (Array.isArray(result) ? result : result == null ? [] : [result]);
@@ -106,6 +381,12 @@ function str(v) {
   if (v == null) return null;
   const s = String(v).trim();
   return s === "" ? null : s;
+}
+
+function normalizeEmail(value) {
+  const email = str(value)?.toLowerCase();
+  if (!email || email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return email;
 }
 
 function json(obj, status) {
@@ -118,7 +399,7 @@ function json(obj, status) {
 // Creates a passwordless parent account via the auth signup endpoint. Nobody
 // keeps the random password; the parent signs in later with an email code.
 async function createAccount(ctx, body) {
-  const email = str(body.email)?.toLowerCase();
+  const email = normalizeEmail(body.email);
   const displayName = str(body.display_name);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return json({ error: "A valid email is required" }, 400);
@@ -140,14 +421,31 @@ async function createAccount(ctx, body) {
   }
 
   const parentName = displayName || email;
-  await data(ctx, "parent_profiles", {
-    method: "POST",
-    body: { user_id: result.user.id, email, parent_name: parentName },
-  });
-  const welcomeSent = await sendWelcomeEmail(ctx, { email, parentName });
+  const account = { user_id: result.user.id, email, name: parentName };
+  let profileSaved = false;
+  try {
+    await data(ctx, "parent_profiles", {
+      method: "POST",
+      body: { user_id: account.user_id, email, parent_name: parentName },
+    });
+    profileSaved = true;
+  } catch (error) {
+    console.error("admin create-account profile save failed:", error && error.message);
+  }
+
+  let welcomeSent = false;
+  try {
+    welcomeSent = await sendWelcomeEmail(ctx, { email, parentName });
+  } catch (error) {
+    console.error("admin create-account welcome request failed:", error && error.message);
+  }
   return json({
-    account: { user_id: result.user.id, email, name: parentName },
+    account_exists: true,
+    account,
+    profile_saved: profileSaved,
+    code_sent: true,
     welcome_sent: welcomeSent,
+    recovery_required: !profileSaved || !welcomeSent,
   }, 200);
 }
 
@@ -192,17 +490,62 @@ async function resendInvitation(ctx, body) {
   const email = profile && str(profile.email);
   if (!email) return json({ error: "Parent profile not found" }, 404);
 
+  return json(await deliverOnboarding(ctx, email, str(profile.parent_name) || email), 200);
+}
+
+async function deliverOnboarding(ctx, email, parentName) {
   const [magicLink, welcome] = await Promise.allSettled([
     fetch(`${apiBase(ctx)}/auth/${ctx.env.BUTTERBASE_APP_ID}/magic-link`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
     }),
-    sendWelcomeEmail(ctx, { email, parentName: str(profile.parent_name) || email }),
+    sendWelcomeEmail(ctx, { email, parentName }),
   ]);
-  return json({
+  return {
     code_sent: magicLink.status === "fulfilled" && magicLink.value.ok,
     welcome_sent: welcome.status === "fulfilled" && welcome.value === true,
+  };
+}
+
+async function recoverAccount(ctx, body) {
+  assertOnlyKeys(body, ["action", "user_id", "email", "parent_name"]);
+  const userId = validateUuid(body.user_id, "Parent account id");
+  const email = normalizeEmail(body.email);
+  const parentName = str(body.parent_name);
+  if (!email) throw requestError("A valid email is required");
+  if (!parentName || parentName.length > 200) throw requestError("Parent name is required");
+  const account = { user_id: userId, email, name: parentName };
+
+  let profileSaved = false;
+  try {
+    const existing = rows(await data(
+      ctx,
+      `parent_profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,email,parent_name`,
+    ))[0];
+    if (existing) {
+      await data(ctx, `parent_profiles/${encodeURIComponent(userId)}`, {
+        method: "PATCH",
+        body: { email, parent_name: parentName },
+      });
+    } else {
+      await data(ctx, "parent_profiles", {
+        method: "POST",
+        body: { user_id: userId, email, parent_name: parentName },
+      });
+    }
+    profileSaved = true;
+  } catch (error) {
+    console.error("admin recover-account profile save failed:", error && error.message);
+  }
+
+  const delivery = await deliverOnboarding(ctx, email, parentName);
+  return json({
+    account_exists: true,
+    account,
+    profile_saved: profileSaved,
+    ...delivery,
+    recovery_required: !profileSaved || !delivery.code_sent || !delivery.welcome_sent,
   }, 200);
 }
 

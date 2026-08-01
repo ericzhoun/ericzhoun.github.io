@@ -4,7 +4,6 @@ export const APP_ID = "app_48ul5eszfv7v";
 export const API_BASE = `https://api.butterbase.ai/v1/${APP_ID}`;
 export const AUTH_BASE = `https://api.butterbase.ai/auth/${APP_ID}`;
 export const SITE_URL = "https://olivistart.com";
-export const ADMIN_KEY = "bb_sk_f13dbc117c3c7cb653e416dea8c706be7e800a9e";
 
 export async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
   const controller = new AbortController();
@@ -37,19 +36,6 @@ export function apiGetByIds(table, ids, token) {
   const uniqueIds = [...new Set(ids)].filter(Boolean);
   if (uniqueIds.length === 0) return Promise.resolve([]);
   return apiGet(`${table}?id=in.(${uniqueIds.join(",")})`, token);
-}
-
-export async function adminApi(path, options = {}) {
-  const method = options.method || "GET";
-  const headers = { Authorization: `Bearer ${ADMIN_KEY}`, ...(options.headers || {}) };
-  if (options.body) headers["Content-Type"] = "application/json";
-  const res = await fetchWithTimeout(`${API_BASE}/${path}`, {
-    method,
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  if (!res.ok) throw new Error(`Admin API error ${res.status}: ${await res.text()}`);
-  return method === "DELETE" ? true : res.json();
 }
 
 /**

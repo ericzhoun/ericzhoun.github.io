@@ -41,8 +41,9 @@ test("admin.js detail view wires all four parent actions", async () => {
 
 test("admin.js reads the parent's own students and enrollments by user_id", async () => {
   const script = await readAdmin();
-  assert.match(script, /students\?user_id=eq\./);
-  assert.match(script, /enrollments\?user_id=eq\./);
+  assert.match(script, /adminData\.read\("students", \{/);
+  assert.match(script, /adminData\.read\("enrollments", \{/);
+  assert.match(script, /field: "user_id", operator: "eq", value: userId/);
 });
 
 test("admin.js warns before setting credits below attended", async () => {
@@ -53,6 +54,14 @@ test("admin.js warns before setting credits below attended", async () => {
 test("admin.js create-account success path routes into accountDetail using the returned account", async () => {
   const script = await readAdmin();
   assert.match(script, /res\.account\.user_id/);
+});
+
+test("admin.js keeps incomplete account setup visible and wires explicit recovery", async () => {
+  const script = await readAdmin();
+  assert.match(script, /getAccountCreationMessage\(res\)/);
+  assert.match(script, /Complete setup and resend onboarding/);
+  assert.match(script, /adminFn\("recover-account"/);
+  assert.match(script, /accountDetail\(res\.account\.user_id, res\.account\.email, res\.account\.name, res\)/);
 });
 
 // A stored access token expires after an hour, so the admin call has to

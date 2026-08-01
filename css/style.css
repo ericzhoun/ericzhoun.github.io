@@ -444,7 +444,8 @@ textarea {
 
   .admin-nav {
     display: flex;
-    overflow-x: auto;
+    flex-wrap: wrap;
+    overflow-x: visible;
   }
 
   .admin-nav a {

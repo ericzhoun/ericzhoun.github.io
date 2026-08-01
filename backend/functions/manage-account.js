@@ -2,7 +2,9 @@
 // Butterbase auth exposes no "change password with current password" endpoint,
 // so change-password uses the forgot-password (email code) -> reset-password
 // flow, driven server-side so the target email is always the caller's own.
-// HTTP trigger: auth "required". Writes run as the end user (RLS-enforced).
+// HTTP trigger: auth "required". Enrollment compatibility writes run as the
+// verified end user. Authoritative profile writes use the server-only service
+// credential because parents have SELECT-only access to parent_profiles.
 export async function handler(req, ctx) {
   if (!ctx.user) return json({ error: "Authentication required" }, 401);
 
@@ -18,7 +20,12 @@ export async function handler(req, ctx) {
   const me = await currentUser(req, ctx, apiBase, appId);
   if (!me) return json({ error: "Could not verify identity" }, 403);
   if (action === "update-contact") {
-    return updateContact(ctx, me, body);
+    try {
+      return await updateContact(ctx, me, body);
+    } catch (error) {
+      console.error("manage-account profile update failed:", error && error.message);
+      return json({ error: "Could not save profile. Please try again." }, 502);
+    }
   }
   if (action === "change-password-init") {
     return changePasswordInit(me.email, apiBase, appId);
@@ -29,8 +36,9 @@ export async function handler(req, ctx) {
   return json({ error: "Unknown action" }, 400);
 }
 
-// Persists the caller's durable profile and keeps legacy enrollment contact
-// columns in sync. The CTE makes both changes in one database statement.
+// Persists the caller's durable profile with trusted service access, then
+// keeps the caller's legacy enrollment contact columns in sync under normal
+// user-isolation RLS. Identity fields come only from the verified auth user.
 async function updateContact(ctx, me, body) {
   const parentName = str(body.parent_name) || str(me.display_name) || str(me.email);
   const phone = str(body.student_phone);
@@ -39,34 +47,75 @@ async function updateContact(ctx, me, body) {
 
   if (!parentName) return json({ error: "Parent name is required" }, 400);
 
-  const res = await ctx.db.query(
-    `WITH saved_profile AS (
-      INSERT INTO parent_profiles
-        (user_id, email, parent_name, student_phone, emergency_contact, allergies, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, now())
-      ON CONFLICT (user_id) DO UPDATE SET
-        email = EXCLUDED.email,
-        parent_name = EXCLUDED.parent_name,
-        student_phone = EXCLUDED.student_phone,
-        emergency_contact = EXCLUDED.emergency_contact,
-        allergies = EXCLUDED.allergies,
-        updated_at = now()
-      RETURNING *
-    ), updated_enrollments AS (
-      UPDATE enrollments SET
-        parent_name = $3,
-        student_phone = $4,
-        emergency_contact = $5,
-        allergies = $6
-      WHERE user_id = $1
-      RETURNING id
-    )
-    SELECT saved_profile.*, (SELECT count(*)::int FROM updated_enrollments) AS updated_enrollments
-    FROM saved_profile`,
-    [ctx.user.id, me.email, parentName, phone, emergency, allergies]
+  const fields = {
+    email: me.email,
+    parent_name: parentName,
+    student_phone: phone,
+    emergency_contact: emergency,
+    allergies,
+    updated_at: new Date().toISOString(),
+  };
+  const profile = await saveProfile(ctx, ctx.user.id, fields);
+  const enrollments = await ctx.db.query(
+    `UPDATE enrollments SET
+      parent_name = $2,
+      student_phone = $3,
+      emergency_contact = $4,
+      allergies = $5
+    WHERE user_id = $1
+    RETURNING id`,
+    [ctx.user.id, parentName, phone, emergency, allergies]
   );
-  const { updated_enrollments: updatedEnrollments, ...profile } = res.rows[0];
-  return json({ profile, updated_enrollments: updatedEnrollments }, 200);
+  return json({ profile, updated_enrollments: enrollments.rowCount ?? enrollments.rows.length }, 200);
+}
+
+async function saveProfile(ctx, userId, fields) {
+  const path = `parent_profiles/${encodeURIComponent(userId)}`;
+  const existing = await serviceData(ctx, path, { allowNotFound: true });
+  if (existing !== null) {
+    return firstRow(await serviceData(ctx, path, { method: "PATCH", body: fields }));
+  }
+
+  try {
+    return firstRow(await serviceData(ctx, "parent_profiles", {
+      method: "POST",
+      body: { user_id: userId, ...fields },
+    }));
+  } catch (error) {
+    // A concurrent first save can win between the existence check and insert.
+    // Retrying as an update makes the create path idempotent without relying
+    // on an undocumented REST upsert extension.
+    if (error.status !== 409) throw error;
+    return firstRow(await serviceData(ctx, path, { method: "PATCH", body: fields }));
+  }
+}
+
+async function serviceData(ctx, path, options = {}) {
+  const res = await fetch(
+    `${ctx.env.BUTTERBASE_API_URL || "https://api.butterbase.ai"}/v1/${ctx.env.BUTTERBASE_APP_ID}/${path}`,
+    {
+      method: options.method || "GET",
+      headers: {
+        Authorization: `Bearer ${ctx.env.SERVICE_KEY}`,
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    }
+  );
+  if (options.allowNotFound && res.status === 404) return null;
+  const result = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const error = new Error((result.error && result.error.message) || result.error || `Data API error ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  return result;
+}
+
+function firstRow(result) {
+  const row = Array.isArray(result) ? result[0] : result;
+  if (!row || typeof row !== "object") throw new Error("Profile save returned no row");
+  return row;
 }
 
 // Triggers a forgot-password email for the caller's own email.
@@ -116,14 +165,25 @@ async function currentUser(req, ctx, apiBase, appId) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader) return null;
 
-  const res = await fetch(`${apiBase}/auth/${appId}/me`, {
-    headers: { Authorization: authHeader },
-  });
-  if (!res.ok) return null;
+  try {
+    const res = await fetch(`${apiBase}/auth/${appId}/me`, {
+      headers: { Authorization: authHeader },
+    });
+    if (!res.ok) return null;
 
-  const data = await res.json().catch(() => ({}));
-  const user = data.user || data;
-  return user?.email && user.id === ctx.user.id ? user : null;
+    const data = await res.json().catch(() => ({}));
+    const user = data.user || data;
+    const email = normalizeEmail(user && user.email);
+    return email && user.id === ctx.user.id ? { ...user, email } : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeEmail(value) {
+  const email = str(value)?.toLowerCase();
+  if (!email || email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return email;
 }
 
 function str(v) {

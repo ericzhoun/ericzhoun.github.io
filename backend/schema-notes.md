@@ -88,10 +88,18 @@ payload; the endpoint treats omitted tables as drops and refuses them without
   not null, unique), `parent_name` (`text`, not null), nullable text fields
   `student_phone`, `emergency_contact`, and `allergies`, plus `created_at` and
   `updated_at` (`timestamptz`, not null, default `now()`).
-- RLS user access is deliberately limited to SELECT, INSERT, and UPDATE. SELECT
-  uses `user_id = current_user_id()::uuid`; INSERT uses the same expression as
-  `WITH CHECK`; UPDATE uses it for both `USING` and `WITH CHECK`. End users have
-  no DELETE policy.
+- The initially applied RLS state allows end-user SELECT, INSERT, and UPDATE.
+  That state is superseded by the required select-only policy migration below.
 - `parent_profiles_service_bypass` grants only `butterbase_service` all
   operations with `USING (true) WITH CHECK (true)` for trusted administrative
   and synchronization work.
+
+## 2026-08-01 - required parent profile policy hardening (not applied)
+
+- Desired end-user state: own-row SELECT only, using
+  `user_id = current_user_id()::uuid`. End users must have no INSERT, UPDATE,
+  DELETE, or ALL policy on `parent_profiles`.
+- Desired trusted state: retain the table-scoped `butterbase_service` bypass.
+- The idempotent, pause-protected live migration and rollback procedure is in
+  `backend/migrations/2026-08-01-parent-profiles-select-only-policy.md`.
+- This repository change does not apply or mutate the live policy state.
