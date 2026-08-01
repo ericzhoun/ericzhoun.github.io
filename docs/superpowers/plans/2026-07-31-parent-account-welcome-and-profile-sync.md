@@ -41,7 +41,6 @@
 - `test/login-flow.test.mjs`: welcome-link parsing and safe redirect behavior.
 - `test/account-profile.test.mjs`: real profile value precedence behavior.
 - `test/admin-account-messages.test.mjs`: real delivery-state copy behavior.
-- `test/admin-accounts.test.mjs`: CMS wiring for delivery states and resend.
 - `test/account-contact-save.test.mjs`: account-page durable-profile wiring.
 
 ---
@@ -587,13 +586,12 @@ git commit -m "feat: open parent welcome links in code mode"
 - Create: `js/admin-account-messages.js`
 - Create: `test/admin-account-messages.test.mjs`
 - Modify: `js/admin.js:390-560`
-- Modify: `test/admin-accounts.test.mjs`
 
 **Interfaces:**
 - Consumes: create response `{ account, welcome_sent }` and resend response `{ code_sent, welcome_sent }`.
 - Produces: `getOnboardingDeliveryMessage({ code_sent, welcome_sent }): string`, accurate admin notifications, and `resend-invitation` using only `user_id`.
 
-- [ ] **Step 1: Write failing delivery behavior and CMS wiring tests**
+- [ ] **Step 1: Write failing delivery behavior tests**
 
 Create a table-driven real behavior test:
 
@@ -611,28 +609,15 @@ test("onboarding delivery copy distinguishes every partial result", () => {
 });
 ```
 
-Keep the existing lightweight wiring contract focused on the boundary action:
-
-```js
-test("admin.js reports welcome delivery and exposes onboarding resend", async () => {
-  const script = await readAdmin();
-  assert.match(script, /res\.welcome_sent/);
-  assert.match(script, /Account created and welcome email sent/);
-  assert.match(script, /welcome email could not be sent/);
-  assert.match(script, /Resend onboarding emails/);
-  assert.match(script, /adminFn\("resend-invitation", \{ user_id: userId \}\)/);
-  assert.match(script, /code_sent/);
-  assert.match(script, /welcome_sent/);
-});
-```
-
-The mutation caught is removal of status-sensitive messaging or client-side resending to an arbitrary email.
+The real browser end-to-end test in Task 9 verifies that the CMS calls the
+`resend-invitation` boundary using only `user_id`. Do not add a source-text test
+for UI wiring.
 
 - [ ] **Step 2: Run and verify RED**
 
-Run: `node --test test/admin-account-messages.test.mjs test/admin-accounts.test.mjs`
+Run: `node --test test/admin-account-messages.test.mjs`
 
-Expected: FAIL because the message module and resend action do not exist.
+Expected: FAIL because the message module does not exist.
 
 - [ ] **Step 3: Implement creation messaging**
 
@@ -656,14 +641,14 @@ Disable the button while the request is active and restore it in `finally`.
 
 - [ ] **Step 5: Run admin frontend tests**
 
-Run: `node --test test/admin-account-messages.test.mjs test/admin-accounts.test.mjs test/admin-manage.test.mjs`
+Run: `node --test test/admin-account-messages.test.mjs test/admin-manage.test.mjs`
 
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add js/admin-account-messages.js js/admin.js test/admin-account-messages.test.mjs test/admin-accounts.test.mjs
+git add js/admin-account-messages.js js/admin.js test/admin-account-messages.test.mjs
 git commit -m "feat: show parent onboarding delivery status"
 ```
 
