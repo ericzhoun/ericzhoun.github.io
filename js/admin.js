@@ -1,4 +1,5 @@
 import { adminApi, callFunction, formatPrice, formatTime, planCampBundleSync } from "./api.js";
+import { getOnboardingDeliveryMessage } from "./admin-account-messages.js";
 import { getToken, getUser, isAdmin, logout, refreshToken } from "./auth.js";
 
 const nav = [
@@ -431,7 +432,9 @@ function renderNewAccountForm() {
     const data = Object.fromEntries(new FormData(e.currentTarget));
     try {
       const res = await adminFn("create-account", { email: data.email, display_name: data.display_name });
-      notify("Account created. The parent can sign in with an email code.");
+      notify(res.welcome_sent
+        ? "Account created and welcome email sent."
+        : "Account created, but the welcome email could not be sent. Resend onboarding emails.");
       await accountDetail(res.account.user_id, res.account.email, res.account.name);
     } catch (error) {
       errorEl.textContent = error.code === "EMAIL_EXISTS"
@@ -469,7 +472,7 @@ async function accountDetail(userId, email, name) {
   const scheduleOptions = schedules.map((s) => `<option value="${esc(s.id)}">${esc(scheduleLabel(s))}</option>`).join("");
 
   app.innerHTML = `<div class="admin-crud-header">
-      <h1>${esc(name || email || "Parent")}</h1>${button("← Back to Accounts", "back-to-accounts")}</div>
+      <h1>${esc(name || email || "Parent")}</h1><div class="admin-header-actions">${button("Resend onboarding emails", "resend-onboarding", "btn btn-sm btn-secondary")}${button("← Back to Accounts", "back-to-accounts")}</div></div>
     <p class="muted">${esc(email || "")}</p>
     <div id="form-slot"></div>
     <section><div class="admin-crud-header"><h2>Students</h2>${button("+ Add student", "add-student-form")}</div>
@@ -502,6 +505,22 @@ async function accountDetail(userId, email, name) {
   app.addEventListener("click", async (event) => {
     const action = event.target.dataset.action || "";
     if (action === "back-to-accounts") { await accounts(); return; }
+    if (action === "resend-onboarding") {
+      const resendButton = event.target;
+      resendButton.disabled = true;
+      resendButton.textContent = "Resending…";
+      try {
+        const result = await adminFn("resend-invitation", { user_id: userId });
+        notify(getOnboardingDeliveryMessage(result));
+        renderNotification();
+      } catch (error) {
+        alert(error.message || "Could not resend onboarding emails.");
+      } finally {
+        resendButton.disabled = false;
+        resendButton.textContent = "Resend onboarding emails";
+      }
+      return;
+    }
 
     if (action === "add-student-form" || action.startsWith("edit-student:")) {
       const editing = action.startsWith("edit-student:") ? students.find((s) => s.id === action.split(":")[1]) : null;

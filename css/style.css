@@ -248,6 +248,13 @@ textarea {
   margin-bottom: 22px;
 }
 
+.admin-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .admin-table-wrapper {
   overflow-x: auto;
   background: #fff;
@@ -452,6 +459,16 @@ textarea {
 
   .admin-content {
     padding: 32px 18px;
+  }
+
+  .admin-crud-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .admin-header-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .stat-grid,
