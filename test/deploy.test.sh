@@ -2,51 +2,222 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PUBLIC_PAYLOAD="$(mktemp)"
-ADMIN_PAYLOAD="$(mktemp)"
-trap 'rm -f "$PUBLIC_PAYLOAD" "$ADMIN_PAYLOAD"' EXIT
+TEST_TMP_ROOT="$(mktemp -d)"
+PAYLOAD_TMP="$TEST_TMP_ROOT/payloads"
+mkdir -p "$PAYLOAD_TMP"
+trap 'rm -rf "$TEST_TMP_ROOT"' EXIT
 
 curl() {
-  local argument
+  local argument config_mode=false payload_path="" secret_in_arguments=false line
   for argument in "$@"; do
-    if [[ "$argument" == @* ]]; then
-      cp "${argument#@}" "$DEPLOY_CAPTURE_PATH"
-    fi
+    [[ "$argument" == "--config" || "$argument" == "-K" ]] && config_mode=true
+    [[ "$argument" == @* ]] && payload_path="${argument#@}"
+    case "$argument" in
+      *api-key-fixture*|*github-token-fixture*|*gmail-user-fixture*) secret_in_arguments=true ;;
+    esac
   done
-  printf '{"deployedAt":"test"}\n'
+
+  if $config_mode; then
+    while IFS= read -r line; do
+      if [[ "$line" == 'data = "@'*'"' ]]; then
+        payload_path="${line#data = \"@}"
+        payload_path="${payload_path%\"}"
+      fi
+    done
+  fi
+
+  [[ -n "$payload_path" && -f "$payload_path" ]] || {
+    printf 'mock curl did not receive a readable payload path\n' >&2
+    return 96
+  }
+
+  local payload_name mode
+  payload_name="$(python3 - "$payload_path" <<'PY'
+import json
+import sys
+with open(sys.argv[1]) as payload_file:
+    print(json.load(payload_file)["name"])
+PY
+)"
+  mode="$(python3 - "$payload_path" <<'PY'
+import os
+import sys
+print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])
+PY
+)"
+  cp "$payload_path" "$DEPLOY_CAPTURE_DIR/$payload_name.json"
+  printf '%s|%s|%s\n' "$payload_path" "$mode" "$secret_in_arguments" >> "$DEPLOY_META_PATH"
+  printf '%s\n' "${CURL_TEST_RESPONSE:-{\"deployedAt\":\"test\"}}"
 }
 export -f curl
 
-DEPLOY_CAPTURE_PATH="$PUBLIC_PAYLOAD" \
-  BUTTERBASE_API_KEY=test \
-  INVITATION_GMAIL_USER_ID=test-id \
-  "$ROOT_DIR/backend/deploy.sh" guest-enroll >/dev/null
+assert_payload_removed() {
+  local metadata_path="$1" payload_path
+  while IFS='|' read -r payload_path _; do
+    [[ ! -e "$payload_path" ]] || {
+      printf 'payload was not removed: %s\n' "$payload_path" >&2
+      return 1
+    }
+  done < "$metadata_path"
+}
 
-python3 - "$PUBLIC_PAYLOAD" <<'PY'
+ALL_CAPTURE="$TEST_TMP_ROOT/all-capture"
+ALL_META="$TEST_TMP_ROOT/all-meta"
+mkdir -p "$ALL_CAPTURE"
+: > "$ALL_META"
+
+DEPLOY_CAPTURE_DIR="$ALL_CAPTURE" \
+DEPLOY_META_PATH="$ALL_META" \
+TMPDIR="$PAYLOAD_TMP" \
+BUTTERBASE_API_KEY=api-key-fixture \
+GITHUB_TOKEN=github-token-fixture \
+INVITATION_GMAIL_USER_ID=gmail-user-fixture \
+  "$ROOT_DIR/backend/deploy.sh" >/dev/null
+
+python3 - "$ALL_CAPTURE" "$ALL_META" "$PAYLOAD_TMP" <<'PY'
 import json
+import os
+import pathlib
 import sys
 
-with open(sys.argv[1]) as payload_file:
-    payload = json.load(payload_file)
+capture_dir = pathlib.Path(sys.argv[1])
+meta_path = pathlib.Path(sys.argv[2])
+payload_tmp = pathlib.Path(sys.argv[3]).resolve()
 
-assert payload["name"] == "guest-enroll"
-assert "INVITATION_GMAIL_USER_ID" not in payload["envVars"]
+configured = {
+    "guest-enroll", "claim-enrollments", "complete-registration",
+    "class-availability", "enroll-guard", "stripe-webhook",
+    "sync-enrollment-payment", "manage-account", "manage-students",
+    "manage-artwork", "admin-manage", "sync-student-ages",
+    "trigger-schedule-bake",
+}
+service_consumers = {
+    "admin-manage", "enroll-guard", "guest-enroll", "manage-account",
+    "manage-artwork", "trigger-schedule-bake",
+}
+
+payload_files = {path.stem: path for path in capture_dir.glob("*.json")}
+assert set(payload_files) == configured, (set(payload_files), configured)
+metadata = [line.split("|") for line in meta_path.read_text().splitlines()]
+assert len(metadata) == len(configured), metadata
+paths = {entry[0] for entry in metadata}
+assert len(paths) == 1, paths
+payload_path = pathlib.Path(next(iter(paths)))
+assert payload_path.parent.resolve() == payload_tmp, (payload_path.parent.resolve(), payload_tmp)
+assert payload_path.name.startswith("olivistart-bb-deploy."), payload_path.name
+assert str(payload_path) != "/tmp/bb-deploy-payload.json", payload_path
+assert {entry[1] for entry in metadata} == {"600"}, metadata
+assert {entry[2] for entry in metadata} == {"false"}, metadata
+
+for name, path in payload_files.items():
+    with path.open() as payload_file:
+        env_vars = json.load(payload_file)["envVars"]
+    assert ("SERVICE_KEY" in env_vars) == (name in service_consumers), name
+    assert ("GITHUB_TOKEN" in env_vars) == (name == "trigger-schedule-bake"), name
+    assert ("INVITATION_GMAIL_USER_ID" in env_vars) == (name == "admin-manage"), name
 PY
+assert_payload_removed "$ALL_META"
 
-DEPLOY_CAPTURE_PATH="$ADMIN_PAYLOAD" \
-  BUTTERBASE_API_KEY=test \
-  INVITATION_GMAIL_USER_ID=test-id \
+SECOND_CAPTURE="$TEST_TMP_ROOT/second-capture"
+SECOND_META="$TEST_TMP_ROOT/second-meta"
+mkdir -p "$SECOND_CAPTURE"
+: > "$SECOND_META"
+DEPLOY_CAPTURE_DIR="$SECOND_CAPTURE" \
+DEPLOY_META_PATH="$SECOND_META" \
+TMPDIR="$PAYLOAD_TMP" \
+BUTTERBASE_API_KEY=api-key-fixture \
+  "$ROOT_DIR/backend/deploy.sh" claim-enrollments >/dev/null
+assert_payload_removed "$SECOND_META"
+
+first_path="$(head -n 1 "$ALL_META" | cut -d'|' -f1)"
+second_path="$(head -n 1 "$SECOND_META" | cut -d'|' -f1)"
+[[ "$first_path" != "$second_path" ]] || {
+  printf 'separate deploy runs reused a payload path\n' >&2
+  exit 1
+}
+
+FAIL_CAPTURE="$TEST_TMP_ROOT/fail-capture"
+FAIL_META="$TEST_TMP_ROOT/fail-meta"
+FAIL_LOG="$TEST_TMP_ROOT/fail-log"
+mkdir -p "$FAIL_CAPTURE"
+: > "$FAIL_META"
+if DEPLOY_CAPTURE_DIR="$FAIL_CAPTURE" \
+   DEPLOY_META_PATH="$FAIL_META" \
+   CURL_TEST_RESPONSE='{"error":"simulated"}' \
+   TMPDIR="$PAYLOAD_TMP" \
+   BUTTERBASE_API_KEY=api-key-fixture \
+     "$ROOT_DIR/backend/deploy.sh" guest-enroll >"$FAIL_LOG" 2>&1; then
+  printf 'failed deploy unexpectedly succeeded\n' >&2
+  exit 1
+fi
+assert_payload_removed "$FAIL_META"
+if rg -q 'api-key-fixture|github-token-fixture|gmail-user-fixture' "$FAIL_LOG"; then
+  printf 'failure output exposed fixture authorization material\n' >&2
+  exit 1
+fi
+
+INVALID_TEMP_PATH="$TEST_TMP_ROOT/not-an-approved-payload"
+printf 'sentinel\n' > "$INVALID_TEMP_PATH"
+export INVALID_TEMP_PATH
+if (
+  mktemp() { printf '%s\n' "$INVALID_TEMP_PATH"; }
+  export -f mktemp
+  DEPLOY_CAPTURE_DIR="$TEST_TMP_ROOT" \
+  DEPLOY_META_PATH="$TEST_TMP_ROOT/invalid-meta" \
+  TMPDIR="$PAYLOAD_TMP" \
+  BUTTERBASE_API_KEY=api-key-fixture \
+    "$ROOT_DIR/backend/deploy.sh" claim-enrollments >/dev/null 2>&1
+); then
+  printf 'deploy accepted an unvalidated temporary payload path\n' >&2
+  exit 1
+fi
+[[ -f "$INVALID_TEMP_PATH" && "$(<"$INVALID_TEMP_PATH")" == "sentinel" ]] || {
+  printf 'invalid temporary path was deleted or modified\n' >&2
+  exit 1
+}
+
+FAIL_FAST_CAPTURE="$TEST_TMP_ROOT/fail-fast-capture"
+FAIL_FAST_META="$TEST_TMP_ROOT/fail-fast-meta"
+mkdir -p "$FAIL_FAST_CAPTURE"
+: > "$FAIL_FAST_META"
+
+if DEPLOY_CAPTURE_DIR="$FAIL_FAST_CAPTURE" DEPLOY_META_PATH="$FAIL_FAST_META" \
+   TMPDIR="$PAYLOAD_TMP" BUTTERBASE_API_KEY=api-key-fixture \
+   env -u INVITATION_GMAIL_USER_ID -u GITHUB_TOKEN \
+     "$ROOT_DIR/backend/deploy.sh" admin-manage >/dev/null 2>&1; then
+  printf 'admin-manage deploy accepted missing Gmail user id\n' >&2
+  exit 1
+fi
+if DEPLOY_CAPTURE_DIR="$FAIL_FAST_CAPTURE" DEPLOY_META_PATH="$FAIL_FAST_META" \
+   TMPDIR="$PAYLOAD_TMP" BUTTERBASE_API_KEY=api-key-fixture \
+   env -u GITHUB_TOKEN -u INVITATION_GMAIL_USER_ID \
+     "$ROOT_DIR/backend/deploy.sh" trigger-schedule-bake >/dev/null 2>&1; then
+  printf 'trigger-schedule-bake deploy accepted missing GitHub token\n' >&2
+  exit 1
+fi
+[[ ! -s "$FAIL_FAST_META" ]] || {
+  printf 'fail-fast validation called curl\n' >&2
+  exit 1
+}
+
+ADMIN_ONLY_CAPTURE="$TEST_TMP_ROOT/admin-only-capture"
+ADMIN_ONLY_META="$TEST_TMP_ROOT/admin-only-meta"
+mkdir -p "$ADMIN_ONLY_CAPTURE"
+: > "$ADMIN_ONLY_META"
+DEPLOY_CAPTURE_DIR="$ADMIN_ONLY_CAPTURE" DEPLOY_META_PATH="$ADMIN_ONLY_META" \
+TMPDIR="$PAYLOAD_TMP" BUTTERBASE_API_KEY=api-key-fixture \
+INVITATION_GMAIL_USER_ID=gmail-user-fixture \
+env -u GITHUB_TOKEN \
   "$ROOT_DIR/backend/deploy.sh" admin-manage >/dev/null
 
-python3 - "$ADMIN_PAYLOAD" <<'PY'
-import json
-import sys
+TRIGGER_ONLY_CAPTURE="$TEST_TMP_ROOT/trigger-only-capture"
+TRIGGER_ONLY_META="$TEST_TMP_ROOT/trigger-only-meta"
+mkdir -p "$TRIGGER_ONLY_CAPTURE"
+: > "$TRIGGER_ONLY_META"
+DEPLOY_CAPTURE_DIR="$TRIGGER_ONLY_CAPTURE" DEPLOY_META_PATH="$TRIGGER_ONLY_META" \
+TMPDIR="$PAYLOAD_TMP" BUTTERBASE_API_KEY=api-key-fixture \
+GITHUB_TOKEN=github-token-fixture \
+env -u INVITATION_GMAIL_USER_ID \
+  "$ROOT_DIR/backend/deploy.sh" trigger-schedule-bake >/dev/null
 
-with open(sys.argv[1]) as payload_file:
-    payload = json.load(payload_file)
-
-assert payload["name"] == "admin-manage"
-assert payload["envVars"]["INVITATION_GMAIL_USER_ID"] == "test-id"
-PY
-
-printf 'deploy payload scope checks passed\n'
+printf 'deploy payload security and scope checks passed\n'

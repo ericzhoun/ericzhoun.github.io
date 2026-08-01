@@ -18,19 +18,52 @@ if [[ -z "${BUTTERBASE_API_KEY:-}" ]]; then
 fi
 
 selected=("$@")
-deploying_admin_manage=false
-if [[ ${#selected[@]} -eq 0 ]]; then
-  deploying_admin_manage=true
-else
+selection_includes() {
+  local target="$1" selected_name
+  [[ ${#selected[@]} -eq 0 ]] && return 0
   for selected_name in "${selected[@]}"; do
-    [[ "$selected_name" == "admin-manage" ]] && deploying_admin_manage=true
+    [[ "$selected_name" == "$target" ]] && return 0
   done
-fi
+  return 1
+}
 
-if $deploying_admin_manage && [[ -z "${INVITATION_GMAIL_USER_ID:-}" ]]; then
+if selection_includes "admin-manage" && [[ -z "${INVITATION_GMAIL_USER_ID:-}" ]]; then
   echo "error: set INVITATION_GMAIL_USER_ID when deploying admin-manage" >&2
   exit 1
 fi
+if selection_includes "trigger-schedule-bake" && [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  echo "error: set GITHUB_TOKEN when deploying trigger-schedule-bake" >&2
+  exit 1
+fi
+
+TMP_BASE="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+PAYLOAD_PREFIX="$TMP_BASE/olivistart-bb-deploy."
+PAYLOAD_FILE=""
+PAYLOAD_VALID=false
+cleanup_payload() {
+  if $PAYLOAD_VALID && [[ "$PAYLOAD_FILE" == "$PAYLOAD_PREFIX"?????? ]]; then
+    rm -f -- "$PAYLOAD_FILE"
+  fi
+}
+trap cleanup_payload EXIT
+
+PAYLOAD_FILE="$(mktemp "${PAYLOAD_PREFIX}XXXXXX")"
+if [[ "$PAYLOAD_FILE" != "$PAYLOAD_PREFIX"?????? || ! -f "$PAYLOAD_FILE" || -L "$PAYLOAD_FILE" ]]; then
+  echo "error: mktemp returned an invalid deploy payload path" >&2
+  exit 1
+fi
+PAYLOAD_VALID=true
+chmod 600 "$PAYLOAD_FILE"
+python3 - "$PAYLOAD_FILE" <<'PY'
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+mode = stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode)
+if mode != 0o600 or not stat.S_ISREG(os.stat(path, follow_symlinks=False).st_mode):
+    raise SystemExit("deploy payload permissions are not private")
+PY
 
 # name|auth|path|impersonation|description
 CONFIGS=(
@@ -54,7 +87,7 @@ deploy_one() {
   local file="$DIR/$name.js"
   [[ -f "$file" ]] || { echo "error: $file not found" >&2; return 1; }
 
-  python3 - "$name" "$auth" "$path" "$impersonation" "$desc" "$cron" "$file" <<'PY' > /tmp/bb-deploy-payload.json
+  python3 - "$name" "$auth" "$path" "$impersonation" "$desc" "$cron" "$file" <<'PY' > "$PAYLOAD_FILE"
 import json, os, sys
 name, auth, path, impersonation, desc, cron, file = sys.argv[1:8]
 triggers = []
@@ -64,38 +97,46 @@ if cron:
     triggers.append({"type": "cron", "config": {"schedule": cron, "timezone": "America/Los_Angeles"}})
 env_vars = {
     "SITE_URL": "https://olivistart.com",
-    "SERVICE_KEY": os.environ["BUTTERBASE_API_KEY"],
-    "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
 }
+service_key_consumers = {
+    "admin-manage", "enroll-guard", "guest-enroll", "manage-account",
+    "manage-artwork", "trigger-schedule-bake",
+}
+if name in service_key_consumers:
+    env_vars["SERVICE_KEY"] = os.environ["BUTTERBASE_API_KEY"]
+if name == "trigger-schedule-bake":
+    env_vars["GITHUB_TOKEN"] = os.environ["GITHUB_TOKEN"]
 if name == "admin-manage":
-    env_vars["INVITATION_GMAIL_USER_ID"] = os.environ.get("INVITATION_GMAIL_USER_ID", "")
+    env_vars["INVITATION_GMAIL_USER_ID"] = os.environ["INVITATION_GMAIL_USER_ID"]
 payload = {
     "name": name,
     "description": desc,
     "code": open(file).read(),
     "triggers": triggers,
     "allow_service_key_impersonation": impersonation == "true",
-    # SERVICE_KEY: the platform does not inject a REST-usable service key into
-    # ctx.env, so functions that call billing endpoints receive it here
-    # (encrypted at rest, never in the repo). GITHUB_TOKEN: only read by
-    # trigger-schedule-bake; optional for every other function, so deploys
-    # without it in the environment still succeed.
+    # Sensitive environment entries are added only to their actual consumers.
+    # The platform encrypts them at rest and they are never written to the repo.
     "envVars": env_vars,
 }
 json.dump(payload, sys.stdout)
 PY
 
-  local out
-  out=$(curl -sS -m 30 -X POST \
-    -H "Authorization: Bearer $BUTTERBASE_API_KEY" \
-    -H "Content-Type: application/json" \
-    --data @/tmp/bb-deploy-payload.json \
-    "$API_BASE/v1/$APP_ID/functions")
-  if echo "$out" | grep -q '"deployedAt"'; then
+  local out curl_config
+  printf -v curl_config '%s\n' \
+    'silent' \
+    'show-error' \
+    'max-time = 30' \
+    'request = "POST"' \
+    "header = \"Authorization: Bearer $BUTTERBASE_API_KEY\"" \
+    'header = "Content-Type: application/json"' \
+    "data = \"@$PAYLOAD_FILE\"" \
+    "url = \"$API_BASE/v1/$APP_ID/functions\""
+  out=$(curl --config - <<<"$curl_config")
+  unset curl_config
+  if grep -q '"deployedAt"' <<<"$out"; then
     echo "deployed: $name"
   else
     echo "FAILED: $name" >&2
-    echo "$out" >&2
     return 1
   fi
 }
