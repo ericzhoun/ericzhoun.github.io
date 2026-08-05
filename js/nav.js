@@ -1,12 +1,13 @@
-document.addEventListener('DOMContentLoaded', () => {
+import { ADMIN_EMAILS } from './auth.js';
+
+function initNav() {
   const toggle = document.getElementById('nav-toggle');
   const nav = document.getElementById('site-nav');
 
   if (nav) {
     try {
       const user = JSON.parse(localStorage.getItem('olivistart_user') || 'null');
-      const adminEmails = ['herfield8@gmail.com', 'lightbyolivia@gmail.com', 'olivistastudio@gmail.com'];
-      if (user && adminEmails.includes(user.email) && !nav.querySelector('.nav-admin')) {
+      if (user && ADMIN_EMAILS.includes(user.email) && !nav.querySelector('.nav-admin')) {
         const adminLink = document.createElement('a');
         adminLink.href = 'admin.html';
         adminLink.className = 'nav-admin';
@@ -24,4 +25,12 @@ document.addEventListener('DOMContentLoaded', () => {
       toggle.setAttribute('aria-expanded', String(isOpen));
     });
   }
-});
+}
+
+// Module scripts are deferred, so DOMContentLoaded has usually not fired yet -
+// but guard anyway so the nav still builds if this ever loads late.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initNav);
+} else {
+  initNav();
+}

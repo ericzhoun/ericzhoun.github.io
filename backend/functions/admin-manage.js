@@ -15,11 +15,19 @@
 // write therefore goes through the REST data API with the app service key,
 // which the *_service_bypass policies admit, the same way guest-enroll uses
 // SERVICE_KEY for billing calls.
-const ADMIN_EMAILS = [
-  "herfield8@gmail.com",
-  "lightbyolivia@gmail.com",
-  "olivistastudio@gmail.com",
-];
+// Injected by deploy.sh from backend/admin-emails.json, the single place the
+// allowlist is written down. Functions are single-file and cannot import a
+// shared module, so the list is passed as config rather than copied here.
+// Fails closed: a missing or malformed value grants nobody admin.
+function adminEmails(ctx) {
+  try {
+    const parsed = JSON.parse(ctx.env.ADMIN_EMAILS || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    console.error("admin allowlist is missing or malformed; denying admin access");
+    return [];
+  }
+}
 
 export async function handler(req, ctx) {
   const adminEmail = await requireAdmin(req, ctx);
@@ -84,7 +92,7 @@ async function requireAdmin(req, ctx) {
     if (!res.ok) return null;
     const data = await res.json().catch(() => ({}));
     const email = (data.user || data || {}).email || null;
-    return email && ADMIN_EMAILS.includes(email) ? email : null;
+    return email && adminEmails(ctx).includes(email) ? email : null;
   } catch (error) {
     console.error("admin-manage identity check failed:", error && error.message);
     return null;

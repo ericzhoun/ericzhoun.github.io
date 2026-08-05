@@ -67,6 +67,8 @@ function request(body, { token = "admin-jwt", kv = createMemoryKv() } = {}) {
         BUTTERBASE_API_URL: "https://api.test",
         SERVICE_KEY: "bb_sk_test",
         INVITATION_GMAIL_USER_ID: "sender-user-1",
+        // deploy.sh injects this from backend/admin-emails.json.
+        ADMIN_EMAILS: JSON.stringify([ADMIN_EMAIL]),
         SITE_URL: "https://olivistart.test",
       },
       kv,
@@ -834,4 +836,23 @@ test("recoveryKey maps distinct addresses to distinct keys", () => {
     ["a@example.com", "b@example.com", "a@example.org", "A@example.com"].map(recoveryKey),
   );
   assert.equal(keys.size, 4);
+});
+
+// The allowlist is now configuration rather than a literal, so a deploy that
+// omits it must deny everyone rather than admit everyone.
+test("admin-manage denies access when the injected allowlist is missing", async () => {
+  const target = request({ action: "list-accounts" });
+  delete target.ctx.env.ADMIN_EMAILS;
+  const res = await callHandler(target);
+  assert.equal(res.status, 403);
+  assert.equal(dataCalls(res).length, 0);
+});
+
+test("admin-manage denies access when the injected allowlist is malformed", async () => {
+  for (const value of ["not json", "{}", '"a string"', "[]"]) {
+    const target = request({ action: "list-accounts" });
+    target.ctx.env.ADMIN_EMAILS = value;
+    const res = await callHandler(target);
+    assert.equal(res.status, 403, `value ${value} should deny`);
+  }
 });

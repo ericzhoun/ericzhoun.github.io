@@ -37,12 +37,23 @@ export function isLoggedIn() {
   return !!getToken();
 }
 
+/**
+ * Admin allowlist for the browser. This gates UI only - the authoritative
+ * check runs server-side in admin-manage, manage-students, and manage-artwork,
+ * which read the same list from backend/admin-emails.json via deploy.sh.
+ * A test asserts the two stay identical, since a static page cannot read the
+ * JSON at load time without making isAdmin() async.
+ */
+export const ADMIN_EMAILS = [
+  "herfield8@gmail.com",
+  "lightbyolivia@gmail.com",
+  "olivistastudio@gmail.com",
+];
+
 /** Check if current user is admin (Olivia's email) */
 export function isAdmin() {
   const user = getUser();
-  return user?.email === "herfield8@gmail.com" ||
-    user?.email === "lightbyolivia@gmail.com" ||
-    user?.email === "olivistastudio@gmail.com";
+  return Boolean(user?.email) && ADMIN_EMAILS.includes(user.email);
 }
 
 /** Login with email + password */
