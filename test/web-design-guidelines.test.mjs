@@ -123,10 +123,26 @@ test("homepage anchors clear the sticky navigation", async () => {
   assert.ok(programPhotoRule !== -1 && programPhotoRule < mobileProgramLayout);
 });
 
-test("homepage promotes the July summer schedule", async () => {
+test("every call-to-action banner promotes the current Fall schedule", async () => {
+  const pages = ["index.html", "about.html", "contact.html", "portfolio.html"];
+  for (const page of pages) {
+    const markup = await read(page);
+    assert.match(
+      markup,
+      /<p>Book now for limited spots available this Fall<\/p>/,
+      `${page} banner copy is stale`,
+    );
+    // The semester parameter is matched against the semester NAME in
+    // pickDefaultSemester, so it has to stay in sync with the database.
+    assert.match(
+      markup,
+      /<a class="btn" href="schedule\.html\?semester=Fall%202026">Fall Class Schedule<\/a>/,
+      `${page} does not link to the Fall schedule`,
+    );
+    assert.doesNotMatch(markup, /Summer Class Schedule/, `${page} still offers Summer`);
+    assert.doesNotMatch(markup, /available in July/, `${page} still names July`);
+  }
   const index = await read("index.html");
-  assert.match(index, /<p>Book now for limited spots available in July<\/p>/);
-  assert.match(index, /<a class="btn" href="schedule\.html(\?[^"]*)?">Summer Class Schedule<\/a>/);
   assert.doesNotMatch(index, /Reach out to learn more or ask about enrolling your child\./);
 });
 
