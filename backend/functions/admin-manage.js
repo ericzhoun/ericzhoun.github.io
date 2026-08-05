@@ -401,8 +401,17 @@ function normalizeEmail(value) {
   return email;
 }
 
+// The KV store rejects "@" in keys (400 key_invalid), so an email cannot be
+// embedded raw - doing so made every create-account fail its recovery lookup.
+// base64url keeps the mapping one-to-one and produces only [A-Za-z0-9_-].
+// The address is still stored in the value, so nothing needs to decode this.
 function recoveryKey(email) {
-  return `${RECOVERY_KEY_PREFIX}${email}`;
+  const bytes = new TextEncoder().encode(email);
+  const encoded = btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return `${RECOVERY_KEY_PREFIX}${encoded}`;
 }
 
 function validatePendingRecovery(candidate, email) {
