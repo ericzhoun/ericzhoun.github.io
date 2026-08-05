@@ -13,6 +13,8 @@ billing, and the serverless functions in `functions/`.
   `mark-attendance` are unchanged and still live from these sources).
 - `deploy.sh` - deploys from `functions/` via the management API.
 - `schema-notes.md` - log of schema migrations applied via `schema/apply`.
+- `migrate.py` / `create_users.py` - copy an app's data to another app. Used
+  for the 2026-08-05 herfield -> olivista-studio cutover; see "Migrating".
 
 ## Deploying
 
@@ -68,3 +70,43 @@ configuration for `admin-manage`.
   and never returned to clients.
 - Capacity counts `confirmed` plus `pending` holds younger than 60 minutes,
   in `guest-enroll`, `enroll-guard`, and `class-availability`.
+
+## Migrating to another app
+
+`migrate.py` copies table rows between two Butterbase apps, preserving primary
+keys, `created_at`, and dates so foreign keys keep resolving. `create_users.py`
+recreates the end users first, because their ids necessarily change.
+
+Order matters - parents before children, or the foreign keys reject the insert:
+
+```bash
+export SRC=app_old DST=app_new SRC_KEY=bb_sk_... DST_KEY=bb_sk_...
+
+# 1. Recreate accounts. Roster is a JSON file of {old_id, email, display_name},
+#    built from manage_auth_users list on the source app. It holds customer
+#    email addresses, so it is gitignored - this repo is public.
+ROSTER=backend/roster.json ./backend/create_users.py --out backend/user_map.json
+
+# 2. Catalog tables carry no user data and can move any time.
+./backend/migrate.py semesters programs class_schedules class_sessions
+
+# 3. User-scoped tables, with ids remapped.
+USER_MAP=backend/user_map.json \
+SKIP_USERS=<comma-separated source user ids to exclude> \
+  ./backend/migrate.py parent_profiles students enrollments bookings artwork_photos
+```
+
+Both scripts are idempotent - rows and accounts already present are skipped, so
+a partial run (signup is rate limited to roughly 5 per 15 minutes) can be
+re-run. `migrate.py` refuses any row whose `user_id` is missing from the map
+rather than writing a dangling reference, and skips child rows whose parent was
+deliberately excluded.
+
+Two things it does not carry:
+
+- **Passwords.** Butterbase exposes no hash export, so users sign in with a
+  magic-link code afterwards. Recreated accounts start `email_verified: false`,
+  which `claim-enrollments` rejects until they verify.
+- **Storage objects.** Re-upload them and rewrite the referencing column
+  (`artwork_photos.storage_object_id`) via `REMAP`, since re-upload mints a new
+  object id.
