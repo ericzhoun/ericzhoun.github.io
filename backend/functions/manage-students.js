@@ -113,7 +113,9 @@ async function assignEnrollment(ctx, body) {
 }
 
 function isAdmin(email) {
-  return email === "herfield8@gmail.com" || email === "lightbyolivia@gmail.com";
+  return email === "herfield8@gmail.com" ||
+    email === "lightbyolivia@gmail.com" ||
+    email === "olivistastudio@gmail.com";
 }
 
 function str(v) {

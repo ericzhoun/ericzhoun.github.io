@@ -5,7 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (nav) {
     try {
       const user = JSON.parse(localStorage.getItem('olivistart_user') || 'null');
-      const adminEmails = ['herfield8@gmail.com', 'lightbyolivia@gmail.com'];
+      const adminEmails = ['herfield8@gmail.com', 'lightbyolivia@gmail.com', 'olivistastudio@gmail.com'];
       if (user && adminEmails.includes(user.email) && !nav.querySelector('.nav-admin')) {
         const adminLink = document.createElement('a');
         adminLink.href = 'admin.html';

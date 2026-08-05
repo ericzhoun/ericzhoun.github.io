@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handler } from "../backend/functions/admin-manage.js";
+import { handler, recoveryKey } from "../backend/functions/admin-manage.js";
 
 const ADMIN_EMAIL = "herfield8@gmail.com";
 const RECOVERY_USER_ID = "11111111-1111-4111-8111-111111111111";
 const RECOVERY_EMAIL = "parent@example.com";
-const RECOVERY_KEY = `admin-account-recovery:${RECOVERY_EMAIL}`;
+// Derived from the implementation rather than written out, so the fixture
+// cannot drift from the real key format the way it did when the raw address
+// was embedded here.
+const RECOVERY_KEY = recoveryKey(RECOVERY_EMAIL);
 
 function createMemoryKv(initial = [], failures = {}) {
   const values = new Map(initial);
@@ -211,9 +214,14 @@ test("create-account persists the profile before sending the branded welcome ema
   assert.equal(welcome.body.toolName, "GMAIL_SEND_EMAIL");
   assert.equal(welcome.body.userId, "sender-user-1");
   assert.equal(welcome.body.params.to, "new@example.com");
-  assert.equal(welcome.body.params.subject, "Your OliVista Art Studio account");
+  assert.equal(welcome.body.params.subject, "Welcome to OliVista Art Studio");
   assert.match(welcome.body.params.body, /admin of OliVista Art Studio has created an account for you/);
   assert.match(welcome.body.params.body, /separate security email/);
+  // Signup verification codes are valid for 24 hours, not the 15 minutes the
+  // email used to claim - parents were being rushed for no reason.
+  assert.match(welcome.body.params.body, /expire after 24 hours/);
+  assert.doesNotMatch(welcome.body.params.body, /15 minutes/);
+  assert.match(welcome.body.params.body, /Thank you!\nOlivia Liu$/);
   const welcomeUrl = welcome.body.params.body
     .split("\n")
     .find((line) => line.startsWith("https://olivistart.test/"));
@@ -800,4 +808,30 @@ test("list-accounts ignores rows with no owner", async () => {
   assert.equal(res.status, 200);
   const { accounts } = await res.json();
   assert.deepEqual(accounts, []);
+});
+
+// The KV store rejects "@" in keys with 400 key_invalid. Embedding the raw
+// address made every create-account fail its recovery lookup and return 503,
+// so the encoding is pinned here rather than left implicit.
+test("recoveryKey never emits a character the KV store rejects", () => {
+  const addresses = [
+    "parent@example.com",
+    "parent+tag@sub.domain.co.uk",
+    "UPPER.Case@Example.COM",
+    "dashed-name@example-domain.org",
+  ];
+  for (const address of addresses) {
+    const key = recoveryKey(address);
+    assert.ok(key.startsWith("admin-account-recovery:"), `prefix missing for ${address}`);
+    const suffix = key.slice("admin-account-recovery:".length);
+    assert.match(suffix, /^[A-Za-z0-9_-]+$/, `unsafe characters for ${address}`);
+    assert.ok(!key.includes("@"), `"@" leaked into the key for ${address}`);
+  }
+});
+
+test("recoveryKey maps distinct addresses to distinct keys", () => {
+  const keys = new Set(
+    ["a@example.com", "b@example.com", "a@example.org", "A@example.com"].map(recoveryKey),
+  );
+  assert.equal(keys.size, 4);
 });

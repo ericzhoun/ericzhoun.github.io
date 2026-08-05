@@ -40,7 +40,9 @@ export function isLoggedIn() {
 /** Check if current user is admin (Olivia's email) */
 export function isAdmin() {
   const user = getUser();
-  return user?.email === "herfield8@gmail.com" || user?.email === "lightbyolivia@gmail.com";
+  return user?.email === "herfield8@gmail.com" ||
+    user?.email === "lightbyolivia@gmail.com" ||
+    user?.email === "olivistastudio@gmail.com";
 }
 
 /** Login with email + password */

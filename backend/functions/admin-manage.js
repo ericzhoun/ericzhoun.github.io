@@ -15,7 +15,11 @@
 // write therefore goes through the REST data API with the app service key,
 // which the *_service_bypass policies admit, the same way guest-enroll uses
 // SERVICE_KEY for billing calls.
-const ADMIN_EMAILS = ["herfield8@gmail.com", "lightbyolivia@gmail.com"];
+const ADMIN_EMAILS = [
+  "herfield8@gmail.com",
+  "lightbyolivia@gmail.com",
+  "olivistastudio@gmail.com",
+];
 
 export async function handler(req, ctx) {
   const adminEmail = await requireAdmin(req, ctx);
@@ -405,7 +409,7 @@ function normalizeEmail(value) {
 // embedded raw - doing so made every create-account fail its recovery lookup.
 // base64url keeps the mapping one-to-one and produces only [A-Za-z0-9_-].
 // The address is still stored in the value, so nothing needs to decode this.
-function recoveryKey(email) {
+export function recoveryKey(email) {
   const bytes = new TextEncoder().encode(email);
   const encoded = btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, "-")
