@@ -6,9 +6,13 @@
 #
 # With no arguments, deploys every configured function. The service key is
 # read from the environment and must never be committed to this repo.
+#
+# Targets app_0otd4vmczvu8 (olivista-studio) by default. Override APP_ID to
+# deploy elsewhere, e.g. APP_ID=app_48ul5eszfv7v (herfield, retired); the key
+# in BUTTERBASE_API_KEY must belong to whichever app is targeted.
 set -euo pipefail
 
-APP_ID="app_48ul5eszfv7v"
+APP_ID="${APP_ID:-app_0otd4vmczvu8}"
 API_BASE="https://api.butterbase.ai"
 DIR="$(cd "$(dirname "$0")/functions" && pwd)"
 
@@ -75,6 +79,11 @@ if selection_includes "trigger-schedule-bake" && [[ -z "${GITHUB_TOKEN:-}" ]]; t
   echo "error: set GITHUB_TOKEN when deploying trigger-schedule-bake" >&2
   exit 1
 fi
+ADMIN_EMAILS_FILE="$(cd "$(dirname "$0")" && pwd)/admin-emails.json"
+if ! [[ -s "$ADMIN_EMAILS_FILE" ]]; then
+  echo "error: $ADMIN_EMAILS_FILE is missing; it is the admin allowlist" >&2
+  exit 1
+fi
 
 TMP_BASE="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
 PAYLOAD_PREFIX="$TMP_BASE/olivistart-bb-deploy."
@@ -125,6 +134,19 @@ service_key_consumers = {
     "admin-manage", "enroll-guard", "guest-enroll", "manage-account",
     "manage-artwork", "trigger-schedule-bake",
 }
+# Butterbase functions are single-file and cannot import a shared module, so
+# the admin allowlist is injected instead of being copied into each one.
+# backend/admin-emails.json is the only place it is written down.
+admin_allowlist_consumers = {"admin-manage", "manage-students", "manage-artwork"}
+if name in admin_allowlist_consumers:
+    allowlist_path = os.path.join(os.path.dirname(os.path.dirname(file)), "admin-emails.json")
+    with open(allowlist_path) as allowlist_file:
+        allowlist = json.load(allowlist_file)
+    if not isinstance(allowlist, list) or not allowlist or not all(
+        isinstance(entry, str) and "@" in entry for entry in allowlist
+    ):
+        raise SystemExit(f"error: {allowlist_path} must be a non-empty list of email addresses")
+    env_vars["ADMIN_EMAILS"] = json.dumps(allowlist)
 if name in service_key_consumers:
     env_vars["SERVICE_KEY"] = os.environ["BUTTERBASE_API_KEY"]
 if name == "trigger-schedule-bake":

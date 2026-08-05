@@ -1,6 +1,6 @@
 // Backend API config - shared across all pages.
-// The backend lives at herfield.butterbase.ai (app_48ul5eszfv7v).
-export const APP_ID = "app_48ul5eszfv7v";
+// The backend lives at olivista-studio.butterbase.ai (app_0otd4vmczvu8).
+export const APP_ID = "app_0otd4vmczvu8";
 export const API_BASE = `https://api.butterbase.ai/v1/${APP_ID}`;
 export const AUTH_BASE = `https://api.butterbase.ai/auth/${APP_ID}`;
 export const SITE_URL = "https://olivistart.com";

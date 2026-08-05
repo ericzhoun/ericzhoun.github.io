@@ -11,7 +11,7 @@ export async function handler(req, ctx) {
   }
 
   const action = body.action;
-  const isAdminUser = isAdmin(ctx.user.email);
+  const isAdminUser = isAdmin(ctx);
 
   if (action === "list") return list(ctx, isAdminUser);
   if (action === "add") return add(ctx, body);
@@ -112,8 +112,20 @@ async function assignEnrollment(ctx, body) {
   return json({ enrollment: res.rows[0] }, 200);
 }
 
-function isAdmin(email) {
-  return email === "herfield8@gmail.com" || email === "lightbyolivia@gmail.com";
+// Injected by deploy.sh from backend/admin-emails.json, the single place the
+// allowlist is written down. Functions are single-file and cannot import a
+// shared module, so the list is passed as config rather than copied here.
+// Fails closed: a missing or malformed value grants nobody admin.
+function isAdmin(ctx) {
+  const email = ctx.user && ctx.user.email;
+  if (!email) return false;
+  try {
+    const parsed = JSON.parse(ctx.env.ADMIN_EMAILS || "[]");
+    return Array.isArray(parsed) && parsed.includes(email);
+  } catch {
+    console.error("admin allowlist is missing or malformed; denying admin access");
+    return false;
+  }
 }
 
 function str(v) {

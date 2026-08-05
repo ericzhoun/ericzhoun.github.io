@@ -173,6 +173,12 @@ for name, path in payload_files.items():
     assert ("SERVICE_KEY" in env_vars) == (name in service_consumers), name
     assert ("GITHUB_TOKEN" in env_vars) == (name == "trigger-schedule-bake"), name
     assert ("INVITATION_GMAIL_USER_ID" in env_vars) == (name == "admin-manage"), name
+    admin_allowlist_consumers = {"admin-manage", "manage-students", "manage-artwork"}
+    assert ("ADMIN_EMAILS" in env_vars) == (name in admin_allowlist_consumers), name
+    if name in admin_allowlist_consumers:
+        allowlist = json.loads(env_vars["ADMIN_EMAILS"])
+        assert isinstance(allowlist, list) and allowlist, name
+        assert all("@" in entry for entry in allowlist), name
 PY
 assert_payload_removed "$ALL_META"
 

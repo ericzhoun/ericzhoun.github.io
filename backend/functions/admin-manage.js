@@ -15,7 +15,19 @@
 // write therefore goes through the REST data API with the app service key,
 // which the *_service_bypass policies admit, the same way guest-enroll uses
 // SERVICE_KEY for billing calls.
-const ADMIN_EMAILS = ["herfield8@gmail.com", "lightbyolivia@gmail.com"];
+// Injected by deploy.sh from backend/admin-emails.json, the single place the
+// allowlist is written down. Functions are single-file and cannot import a
+// shared module, so the list is passed as config rather than copied here.
+// Fails closed: a missing or malformed value grants nobody admin.
+function adminEmails(ctx) {
+  try {
+    const parsed = JSON.parse(ctx.env.ADMIN_EMAILS || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    console.error("admin allowlist is missing or malformed; denying admin access");
+    return [];
+  }
+}
 
 export async function handler(req, ctx) {
   const adminEmail = await requireAdmin(req, ctx);
@@ -80,7 +92,7 @@ async function requireAdmin(req, ctx) {
     if (!res.ok) return null;
     const data = await res.json().catch(() => ({}));
     const email = (data.user || data || {}).email || null;
-    return email && ADMIN_EMAILS.includes(email) ? email : null;
+    return email && adminEmails(ctx).includes(email) ? email : null;
   } catch (error) {
     console.error("admin-manage identity check failed:", error && error.message);
     return null;
@@ -401,8 +413,17 @@ function normalizeEmail(value) {
   return email;
 }
 
-function recoveryKey(email) {
-  return `${RECOVERY_KEY_PREFIX}${email}`;
+// The KV store rejects "@" in keys (400 key_invalid), so an email cannot be
+// embedded raw - doing so made every create-account fail its recovery lookup.
+// base64url keeps the mapping one-to-one and produces only [A-Za-z0-9_-].
+// The address is still stored in the value, so nothing needs to decode this.
+export function recoveryKey(email) {
+  const bytes = new TextEncoder().encode(email);
+  const encoded = btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return `${RECOVERY_KEY_PREFIX}${encoded}`;
 }
 
 function validatePendingRecovery(candidate, email) {
@@ -550,9 +571,12 @@ export async function sendWelcomeEmail(ctx, { email, parentName }) {
     "",
     loginUrl.toString(),
     "",
-    "Sign-in codes expire after 15 minutes and can be used only once. If your code has expired, request a new one from the login page.",
+    "Sign-in codes expire after 24 hours and can be used only once. If your code has expired, request a new one from the login page.",
     "",
     "If you did not expect these emails, please contact OliVista Art Studio.",
+    "",
+    "Thank you!",
+    "Olivia Liu",
   ].join("\n");
   const res = await fetch(`${apiBase(ctx)}/v1/${ctx.env.BUTTERBASE_APP_ID}/integrations/execute`, {
     method: "POST",
@@ -560,7 +584,7 @@ export async function sendWelcomeEmail(ctx, { email, parentName }) {
     body: JSON.stringify({
       toolName: "GMAIL_SEND_EMAIL",
       userId: ctx.env.INVITATION_GMAIL_USER_ID,
-      params: { to: email, subject: "Your OliVista Art Studio account", body },
+      params: { to: email, subject: "Welcome to OliVista Art Studio", body },
     }),
   });
   const result = await res.json().catch(() => ({}));

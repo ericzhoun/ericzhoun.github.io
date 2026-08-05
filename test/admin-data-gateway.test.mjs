@@ -25,6 +25,8 @@ function request(body, { token = "admin-jwt" } = {}) {
         SERVICE_KEY: "service-key-fixture",
         SITE_URL: "https://olivistart.test",
         INVITATION_GMAIL_USER_ID: "sender-user-1",
+        // deploy.sh injects this from backend/admin-emails.json.
+        ADMIN_EMAILS: JSON.stringify([ADMIN_EMAIL]),
       },
     },
   };
