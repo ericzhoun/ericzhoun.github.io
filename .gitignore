@@ -1,6 +1,5 @@
 .worktrees/
 .DS_Store
-assets/visual-discovery.svg
 backend/roster.json
 backend/user_map.json
 __pycache__/
