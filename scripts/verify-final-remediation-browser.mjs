@@ -13,7 +13,7 @@ const { chromium } = require(playwrightPath);
 
 const origin = "http://127.0.0.1:4173";
 const apiOrigin = "https://api.butterbase.ai";
-const appId = "app_48ul5eszfv7v";
+const appId = "app_0otd4vmczvu8";
 const parentId = "11111111-1111-4111-8111-111111111111";
 const recoveryKey = "admin-account-recovery:parent.e2e@example.com";
 const browserProfile = await mkdtemp(join(tmpdir(), "olivistart-browser-"));

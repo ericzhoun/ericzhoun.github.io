@@ -6,9 +6,13 @@
 #
 # With no arguments, deploys every configured function. The service key is
 # read from the environment and must never be committed to this repo.
+#
+# Targets app_0otd4vmczvu8 (olivista-studio) by default. Override APP_ID to
+# deploy elsewhere, e.g. APP_ID=app_48ul5eszfv7v (herfield, retired); the key
+# in BUTTERBASE_API_KEY must belong to whichever app is targeted.
 set -euo pipefail
 
-APP_ID="app_48ul5eszfv7v"
+APP_ID="${APP_ID:-app_0otd4vmczvu8}"
 API_BASE="https://api.butterbase.ai"
 DIR="$(cd "$(dirname "$0")/functions" && pwd)"
 

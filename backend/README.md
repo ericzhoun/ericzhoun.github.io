@@ -1,6 +1,6 @@
 # Butterbase backend
 
-The site's backend is Butterbase app `app_48ul5eszfv7v` (api.butterbase.ai):
+The site's backend is Butterbase app `app_0otd4vmczvu8` (api.butterbase.ai):
 Postgres with RLS, auth (password + magic-link codes), managed Stripe Connect
 billing, and the serverless functions in `functions/`.
 
