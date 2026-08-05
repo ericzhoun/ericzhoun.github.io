@@ -559,9 +559,12 @@ export async function sendWelcomeEmail(ctx, { email, parentName }) {
     "",
     loginUrl.toString(),
     "",
-    "Sign-in codes expire after 15 minutes and can be used only once. If your code has expired, request a new one from the login page.",
+    "Sign-in codes expire after 24 hours and can be used only once. If your code has expired, request a new one from the login page.",
     "",
     "If you did not expect these emails, please contact OliVista Art Studio.",
+    "",
+    "Thank you!",
+    "Olivia Liu",
   ].join("\n");
   const res = await fetch(`${apiBase(ctx)}/v1/${ctx.env.BUTTERBASE_APP_ID}/integrations/execute`, {
     method: "POST",
@@ -569,7 +572,7 @@ export async function sendWelcomeEmail(ctx, { email, parentName }) {
     body: JSON.stringify({
       toolName: "GMAIL_SEND_EMAIL",
       userId: ctx.env.INVITATION_GMAIL_USER_ID,
-      params: { to: email, subject: "Your OliVista Art Studio account", body },
+      params: { to: email, subject: "Welcome to OliVista Art Studio", body },
     }),
   });
   const result = await res.json().catch(() => ({}));
