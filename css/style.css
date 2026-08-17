@@ -2710,6 +2710,37 @@ textarea {
   border: none;
 }
 
+/* Keep the scrollbar visible so the row reads as scrollable without hovering.
+   Chrome ignores the ::-webkit-scrollbar pseudo-elements whenever the standard
+   scrollbar-width/-color properties are set, so the two are kept apart. */
+@supports not selector(::-webkit-scrollbar) {
+  .portfolio-row {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.4) rgba(0, 0, 0, 0.08);
+  }
+}
+
+/* Styling the WebKit scrollbar also opts Chrome/Safari out of overlay scrollbars,
+   which are otherwise hidden until the user scrolls (notably on macOS). */
+.portfolio-row::-webkit-scrollbar {
+  height: 10px;
+  -webkit-appearance: none;
+}
+
+.portfolio-row::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+}
+
+.portfolio-row::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 999px;
+}
+
+.portfolio-row::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.55);
+}
+
 .portfolio-thumb {
   flex: 0 0 auto;
   width: 240px;
