@@ -698,17 +698,31 @@ async function attendance(sessionId) {
 }
 async function accounts() {
   const { accounts: list } = await adminFn("list-accounts");
-  const rows = list.map((a) => `<tr>
-    <td>${esc(a.name || "-")}</td><td>${esc(a.email || "-")}</td>
+  const rows = list.map((a) => {
+    const pending = a.kind === "pending";
+    const label = pending
+      ? `${esc(a.name || "-")} <span class="status-badge status-pending">No account yet</span>`
+      : esc(a.name || "-");
+    const target = pending ? `pending:${esc(a.pending_parent_id)}` : `account:${esc(a.user_id)}`;
+    return `<tr>
+    <td>${label}</td><td>${esc(a.email || "-")}</td>
     <td>${a.student_count}</td><td>${a.enrollment_count}</td>
-    <td>${button("Manage", `account:${esc(a.user_id)}`)}</td>
-  </tr>`).join("");
-  app.innerHTML = `<div class="admin-crud-header"><h1>Accounts</h1>${button("+ New account", "new-account")}</div>
+    <td>${button("Manage", target)}</td>
+  </tr>`;
+  }).join("");
+  app.innerHTML = `<div class="admin-crud-header"><h1>Accounts</h1><div class="admin-header-actions">${button("+ New family", "new-pending-parent", "btn btn-sm btn-secondary")}${button("+ New account", "new-account")}</div></div>
     <div id="form-slot"></div>
     ${table(["Parent", "Email", "Students", "Enrollments", "Actions"], rows)}`;
   accountViewClick.listen(app, "click", async (event) => {
     const action = event.target.dataset.action || "";
     if (action === "new-account") { renderNewAccountForm(); return; }
+    if (action === "new-pending-parent") { renderNewPendingParentForm(); return; }
+    if (action.startsWith("pending:")) {
+      const pendingParentId = action.slice("pending:".length);
+      const family = list.find((a) => a.pending_parent_id === pendingParentId);
+      if (family) await pendingDetail(family.pending_parent_id, family.email, family.name);
+      return;
+    }
     if (action.startsWith("account:")) {
       const userId = action.slice("account:".length);
       const account = list.find((a) => a.user_id === userId);
@@ -744,6 +758,51 @@ function renderNewAccountForm() {
         : (error.message || "Could not create the account.");
       errorEl.hidden = false;
       saveButton.disabled = false; saveButton.textContent = "Create account";
+    }
+  });
+}
+
+// Implemented in full below; declared here so the accounts list can route to
+// it. Replaced in the pending-family detail task.
+async function pendingDetail(pendingParentId, email, name) {
+  app.innerHTML = `<h1>${esc(name || "Family")}</h1><p class="muted">${esc(email || "")}</p>`;
+}
+
+// A family the admin has met but who has no account yet. Only a name is
+// required: the email often arrives later, and the family can hold students,
+// notes, and attendance in the meantime.
+function renderNewPendingParentForm() {
+  document.querySelector("#form-slot").innerHTML = `<form id="record-form" class="admin-form">
+    <h3>New family</h3><p class="auth-error" id="form-error" hidden></p>
+    <label>Parent name<input name="parent_name" required></label>
+    <label>Email (optional)<input name="email" type="email"></label>
+    <label>Phone<input name="student_phone"></label>
+    <p class="hint">No account is created and no email is sent. Add the email later, then promote the family to a real account.</p>
+    <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save family</button>
+    <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div>
+  </form>`;
+  const formEl = document.querySelector("#record-form");
+  const errorEl = formEl.querySelector("#form-error");
+  formEl.querySelector('[data-action="cancel-form"]').addEventListener("click", () => render());
+  formEl.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const saveButton = formEl.querySelector("[data-save-button]");
+    saveButton.disabled = true; saveButton.textContent = "Saving…"; errorEl.hidden = true;
+    const data = Object.fromEntries(new FormData(e.currentTarget));
+    try {
+      const res = await adminFn("create-pending-parent", {
+        parent_name: data.parent_name,
+        email: data.email || undefined,
+        student_phone: data.student_phone || undefined,
+      });
+      notify("Family saved.");
+      await pendingDetail(res.pending_parent.id, res.pending_parent.email, res.pending_parent.parent_name);
+    } catch (error) {
+      errorEl.textContent = error.code === "ACCOUNT_EXISTS"
+        ? "An account already exists for this email. Open it from the Accounts list instead."
+        : (error.message || "Could not save the family.");
+      errorEl.hidden = false;
+      saveButton.disabled = false; saveButton.textContent = "Save family";
     }
   });
 }

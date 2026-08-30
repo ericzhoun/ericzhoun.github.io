@@ -81,3 +81,21 @@ test("admin.js sends the admin token as a bearer token, not a custom header", as
   assert.doesNotMatch(script, /X-Admin-Token/);
   assert.match(script, /createAdminCaller\(\{ getToken, refreshToken, callFunction \}\)/);
 });
+
+test("admin.js renders pending families in the accounts list", async () => {
+  const script = await readAdmin();
+  assert.match(script, /a\.kind === "pending"/);
+  assert.match(script, /No account yet/);
+});
+
+test("admin.js routes a pending family to its own detail view", async () => {
+  const script = await readAdmin();
+  assert.match(script, /pending:\$\{esc\(a\.pending_parent_id\)\}/);
+  assert.match(script, /action\.startsWith\("pending:"\)/);
+});
+
+test("admin.js has a create-pending-parent form that does not require an email", async () => {
+  const script = await readAdmin();
+  assert.match(script, /create-pending-parent/);
+  assert.match(script, /<label>Email \(optional\)<input name="email" type="email"><\/label>/);
+});
