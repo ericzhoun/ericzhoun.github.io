@@ -4,6 +4,29 @@ Applied via `POST /v1/app_48ul5eszfv7v/schema/apply` (full-schema declarative
 payload; the endpoint treats omitted tables as drops and refuses them without
 `_drop`, so always send the complete schema from `GET /schema`).
 
+## 2026-08-29 - pending parent accounts (migration_id 20)
+
+- New `pending_parents` table: a family the admin has recorded but that owns no
+  account yet. Columns mirror `parent_profiles` so promotion is a field copy.
+  `email` is nullable (the admin often has only a name) and UNIQUE; Postgres
+  permits many NULLs under a unique constraint, so several no-email
+  placeholders coexist.
+- New `students.pending_parent_id` -> `pending_parents.id` `ON DELETE SET NULL`.
+  A student's owner is `user_id` xor `pending_parent_id`; neither set is still
+  legal and means a bare standalone student. Deleting a placeholder degrades
+  its students to bare standalone instead of deleting them.
+- **`schema/apply` creates tables with RLS OFF.** Verified the hard way: the new
+  table answered an unauthenticated `GET /pending_parents` with its rows, while
+  `parent_profiles` returned `[]`. Only probe rows were ever exposed and they
+  were deleted, but treat this as the rule for every future table - the
+  declarative payload carries no RLS state, and `GET /schema` does not report
+  any, so RLS must be enabled separately and then verified.
+- Fixed with `POST /v1/{app_id}/rls/enable` `{"table_name":"pending_parents"}`,
+  which creates the standard `pending_parents_service_bypass` policy
+  (`butterbase_service`, ALL, `USING (true)`). No end-user policy was added, by
+  design: placeholders are admin-only data. `GET /rls` now shows exactly that
+  one policy, and the anonymous read returns `[]` with a row present.
+
 ## 2026-08-29 - students nullable user_id (no-op)
 
 - `backend/migrations/2026-08-29-students-nullable-user-id.sql` targets

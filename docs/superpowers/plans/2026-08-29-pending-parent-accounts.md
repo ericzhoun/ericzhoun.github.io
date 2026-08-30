@@ -206,6 +206,34 @@ PY
 
 Expected: `200` with `"applied"` greater than 0 and the `CREATE TABLE` / `ADD COLUMN` statements listed. If it returns `"Schema is up to date"` with `applied: 0`, the merge did not take - re-check that you edited `d["schema"]["tables"]` and posted `{"schema": ...}`.
 
+- [ ] **Step 3b: Enable RLS on the new table**
+
+`schema/apply` creates tables with **RLS off** - the declarative payload carries
+no RLS state and `GET /schema` reports none. Without this step the table answers
+unauthenticated reads with its rows. The spec wants no end-user policies at all,
+so enabling is the whole fix: it creates the service bypass and nothing else.
+
+```bash
+set -a; . ./.env; set +a
+curl -s -X POST -H "Authorization: Bearer $BUTTERBASE_API_KEY"   -H "Content-Type: application/json"   -d '{"table_name":"pending_parents"}'   https://api.butterbase.ai/v1/app_0otd4vmczvu8/rls/enable
+```
+
+Expected: `{"success":true,"table":"pending_parents","rls_enabled":true}`.
+
+Then confirm exactly one policy exists and no end-user policy was added:
+
+```bash
+set -a; . ./.env; set +a
+curl -s -H "Authorization: Bearer $BUTTERBASE_API_KEY"   https://api.butterbase.ai/v1/app_0otd4vmczvu8/rls | python3 -c "
+import json,sys
+for p in json.load(sys.stdin)['policies']:
+    if p['tablename']=='pending_parents':
+        print(p['policyname'], p['roles'], p['cmd'])
+"
+```
+
+Expected: one line, `pending_parents_service_bypass {butterbase_service} ALL`.
+
 - [ ] **Step 4: Verify the table exists and is service-writable**
 
 ```bash
@@ -228,7 +256,19 @@ Expected: `{"deleted":true}`.
 
 - [ ] **Step 5: Confirm RLS hides the table from end users**
 
-This cannot be covered by the stubbed unit tests, so check it now. Sign in to the live site as any parent account, open the browser console, and run:
+First the anonymous case, which needs no session. Seed a row, read the table
+with no `Authorization` header at all, then delete the row:
+
+```bash
+set -a; . ./.env; set +a
+curl -s https://api.butterbase.ai/v1/app_0otd4vmczvu8/pending_parents
+```
+
+Expected: `[]`, even though a row exists. Anything else means Step 3b did not
+take - stop and fix it before any real family is recorded.
+
+Then the parent case. Sign in to the live site as any parent account, open the
+browser console, and run:
 
 ```javascript
 await (await fetch("https://api.butterbase.ai/v1/app_0otd4vmczvu8/pending_parents", {
