@@ -1,0 +1,36 @@
+name: Bake schedule snapshot
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Bake schedule snapshot
+        run: node scripts/bake-schedule.mjs
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet -- schedule.html; then
+            echo "No schedule changes to bake."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add schedule.html
+          git commit -m "Bake updated schedule snapshot"
+          git push

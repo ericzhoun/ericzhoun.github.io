@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log In | OliVista Art Studio</title>
+  <meta name="description" content="Log in to your OliVista Art Studio account to manage enrollments.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="index.html" class="logo">OliVista <span>Art Studio</span></a>
+      <nav class="site-nav" id="site-nav">
+        <a href="index.html">Home</a>
+        <a href="portfolio.html">Portfolio</a>
+        <a href="schedule.html">Schedule</a>
+        <a href="about.html">About</a>
+        <a href="contact.html">Contact</a>
+        <a href="account.html" class="nav-account is-active">Account</a>
+      </nav>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </header>
+
+  <main id="main-content">
+    <section class="auth-page">
+      <div class="auth-card">
+        <h2>Welcome Back</h2>
+        <p class="auth-subtitle">Log in to manage your enrollments</p>
+        <p id="auth-error" class="auth-error" aria-live="polite" hidden></p>
+        <p id="auth-info" class="auth-info" aria-live="polite" hidden></p>
+        <form id="login-form" class="auth-form">
+          <label>
+            Email
+            <input type="email" id="email" name="email" autocomplete="email" spellcheck="false" required
+              placeholder="you@example.com">
+          </label>
+          <label id="password-field">
+            Password
+            <input type="password" id="password" name="password" autocomplete="current-password" required
+              placeholder="••••••••">
+          </label>
+          <label id="code-field" hidden>
+            6-digit code
+            <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+              placeholder="123456" class="code-input">
+          </label>
+          <button type="button" class="auth-link-button" id="resend-code" hidden>
+            Send a new code
+          </button>
+          <button type="submit" class="btn auth-btn" id="login-submit">Log In</button>
+        </form>
+        <p class="auth-switch">
+          <a href="#" id="mode-toggle">Email me a sign-in code instead</a>
+        </p>
+        <p class="auth-switch">
+          Don't have an account? <a href="signup.html">Sign up</a>
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <p>OliVista Art Studio · Learn to See · Explore · Create</p>
+      <p><a href="mailto:olivistastudio@gmail.com">olivistastudio@gmail.com</a></p>
+
+      <p class="footer-copyright">© 2026 OliVista Art Studio. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script type="module" src="js/nav.js"></script>
+  <script type="module" src="js/login.js"></script>
+</body>
+
+</html>

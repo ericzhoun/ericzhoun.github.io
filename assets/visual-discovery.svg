@@ -1,0 +1,17 @@
+<svg viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Illustration of an open sketchbook with a sun doodle">
+  <rect x="20" y="60" width="200" height="140" rx="12" fill="none" stroke="#c2255c" stroke-width="4"/>
+  <line x1="120" y1="60" x2="120" y2="200" stroke="#c2255c" stroke-width="4"/>
+  <circle cx="80" cy="115" r="18" fill="none" stroke="#c2255c" stroke-width="4"/>
+  <g stroke="#c2255c" stroke-width="4" stroke-linecap="round">
+    <line x1="80" y1="83" x2="80" y2="73"/>
+    <line x1="80" y1="157" x2="80" y2="147"/>
+    <line x1="52" y1="115" x2="42" y2="115"/>
+    <line x1="118" y1="115" x2="108" y2="115"/>
+    <line x1="59" y1="94" x2="52" y2="87"/>
+    <line x1="101" y1="136" x2="108" y2="143"/>
+    <line x1="59" y1="136" x2="52" y2="143"/>
+    <line x1="101" y1="94" x2="108" y2="87"/>
+  </g>
+  <path d="M150 165 Q160 135 175 165 Q185 145 195 165" fill="none" stroke="#c2255c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="150" y1="180" x2="200" y2="180" stroke="#c2255c" stroke-width="4" stroke-linecap="round"/>
+</svg>

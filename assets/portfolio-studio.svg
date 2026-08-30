@@ -1,0 +1,11 @@
+<svg viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Illustration of a portfolio folder with sketches and a pencil">
+  <path d="M40 70 h160 v120 a10 10 0 0 1 -10 10 h-140 a10 10 0 0 1 -10 -10 z" fill="none" stroke="#c08a28" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M40 70 l15 -20 h50 l10 20" fill="none" stroke="#c08a28" stroke-width="4" stroke-linejoin="round"/>
+  <line x1="70" y1="110" x2="170" y2="110" stroke="#c08a28" stroke-width="3"/>
+  <line x1="70" y1="130" x2="150" y2="130" stroke="#c08a28" stroke-width="3"/>
+  <line x1="70" y1="150" x2="160" y2="150" stroke="#c08a28" stroke-width="3"/>
+  <g transform="translate(150 40) rotate(45)">
+    <rect x="0" y="0" width="14" height="70" rx="3" fill="none" stroke="#c08a28" stroke-width="4"/>
+    <path d="M0 70 l7 14 l7 -14 z" fill="none" stroke="#c08a28" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+</svg>

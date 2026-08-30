@@ -1,0 +1,8 @@
+<svg viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Illustration of a still life with a plaster bust and a vase">
+  <ellipse cx="120" cy="205" rx="90" ry="8" fill="none" stroke="#7e8b3d" stroke-width="3"/>
+  <path d="M70 205 v-20 q0 -10 10 -10 h20 q10 0 10 10 v20" fill="none" stroke="#7e8b3d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M75 175 q5 -60 30 -60 q25 0 30 60" fill="none" stroke="#7e8b3d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M95 118 q10 -15 20 0" fill="none" stroke="#7e8b3d" stroke-width="4" stroke-linecap="round"/>
+  <path d="M160 205 v-50 q0 -30 20 -30 q20 0 20 30 v50" fill="none" stroke="#7e8b3d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="150" y1="205" x2="210" y2="205" stroke="#7e8b3d" stroke-width="4" stroke-linecap="round"/>
+</svg>
