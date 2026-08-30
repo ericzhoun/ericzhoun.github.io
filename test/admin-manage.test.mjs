@@ -1302,3 +1302,65 @@ test("create-enrollment writes a supplied email back to the pending parent", asy
   const patch = dataCalls(res).find((call) => call.method === "PATCH" && call.url.includes("pending_parents"));
   assert.equal(patch.body.email, "late@example.com");
 });
+
+test("promote-pending-parent creates the account, repoints students, and deletes the placeholder", async () => {
+  const res = await callHandler(request({
+    action: "promote-pending-parent",
+    id: "pending-1",
+  }), {
+    respond: (url, call) => {
+      if (url.includes("pending_parents") && call.method === "GET") {
+        return { body: [{ id: "pending-1", parent_name: "Wei Chen", email: "wei@example.com", student_phone: "555-0100" }] };
+      }
+      if (url.includes("/signup")) return { body: { user: { id: "user-new" } } };
+      if (url.includes("parent_profiles")) return { body: [] };
+      if (url.includes("students")) return { body: [{ id: "student-1" }, { id: "student-2" }] };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  const payload = await res.json();
+  assert.equal(payload.account.user_id, "user-new");
+  assert.equal(payload.students_claimed, 2);
+
+  const calls = dataCalls(res);
+  const repoint = calls.find((call) => call.method === "PATCH" && call.url.includes("students"));
+  assert.ok(repoint.url.includes("pending_parent_id=eq.pending-1"));
+  assert.equal(repoint.body.user_id, "user-new");
+  assert.equal(repoint.body.pending_parent_id, null);
+  assert.ok(calls.some((call) => call.method === "DELETE" && call.url.includes("pending_parents/pending-1")));
+});
+
+test("promote-pending-parent refuses a placeholder with no email", async () => {
+  const res = await callHandler(request({
+    action: "promote-pending-parent",
+    id: "pending-2",
+  }), {
+    respond: (url) => url.includes("pending_parents")
+      ? { body: [{ id: "pending-2", parent_name: "Name Only", email: null }] }
+      : { body: [] },
+  });
+
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /email/i);
+  assert.equal(res.calls.some((call) => call.url.includes("/signup")), false);
+});
+
+test("promote-pending-parent keeps the placeholder when account creation fails", async () => {
+  const res = await callHandler(request({
+    action: "promote-pending-parent",
+    id: "pending-1",
+  }), {
+    respond: (url, call) => {
+      if (url.includes("pending_parents") && call.method === "GET") {
+        return { body: [{ id: "pending-1", parent_name: "Wei Chen", email: "wei@example.com" }] };
+      }
+      if (url.includes("/signup")) return { ok: false, status: 409, body: { error: "already exists" } };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 409);
+  assert.equal(dataCalls(res).some((call) => call.method === "DELETE"), false);
+});

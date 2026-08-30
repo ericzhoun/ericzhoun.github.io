@@ -48,6 +48,8 @@ export async function handler(req, ctx) {
         return await updatePendingParent(ctx, body);
       case "update-account":
         return await updateAccount(ctx, body);
+      case "promote-pending-parent":
+        return await promotePendingParent(ctx, body);
       case "add-student":
         return await addStudent(ctx, body);
       case "update-student":
@@ -727,6 +729,83 @@ async function updateAccount(ctx, body) {
   const account = rows(updated)[0];
   if (!account) return json({ error: "Parent profile not found" }, 404);
   return json({ account }, 200);
+}
+
+// Folds a placeholder into a real account. claim-enrollments performs the same
+// three steps against ctx.db when the family signs up on its own; keep the two
+// in step. Profile fields are filled only where the parent has not already set
+// one, so a profile the parent has since edited is never clobbered by stale
+// placeholder data.
+async function mergePendingParent(ctx, { pendingParent, userId }) {
+  const existing = rows(await data(
+    ctx,
+    `parent_profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,parent_name,student_phone,emergency_contact,allergies`,
+  ))[0];
+
+  const filled = {};
+  for (const key of PENDING_FIELDS) {
+    const candidate = str(pendingParent[key]);
+    if (candidate && !(existing && str(existing[key]))) filled[key] = candidate;
+  }
+
+  if (existing) {
+    if (Object.keys(filled).length > 0) {
+      filled.updated_at = new Date().toISOString();
+      await data(ctx, `parent_profiles/${encodeURIComponent(userId)}`, { method: "PATCH", body: filled });
+    }
+  } else {
+    await data(ctx, "parent_profiles", {
+      method: "POST",
+      body: {
+        user_id: userId,
+        email: str(pendingParent.email),
+        parent_name: str(pendingParent.parent_name) || str(pendingParent.email),
+        ...filled,
+      },
+    });
+  }
+
+  const repointed = await data(
+    ctx,
+    `students?pending_parent_id=eq.${encodeURIComponent(pendingParent.id)}`,
+    { method: "PATCH", body: { user_id: userId, pending_parent_id: null } },
+  );
+
+  await data(ctx, `pending_parents/${encodeURIComponent(pendingParent.id)}`, { method: "DELETE" });
+
+  return { students_claimed: rows(repointed).length };
+}
+
+// The admin has the family's email at last: create the real account (which
+// also sends the invitation) and fold the placeholder into it.
+async function promotePendingParent(ctx, body) {
+  assertOnlyKeys(body, ["action", "id"]);
+  const id = str(body.id);
+  if (!id) return json({ error: "Pending parent id is required" }, 400);
+
+  const pendingParent = rows(await data(
+    ctx,
+    `pending_parents?id=eq.${encodeURIComponent(id)}&select=id,parent_name,email,student_phone,emergency_contact,allergies`,
+  ))[0];
+  if (!pendingParent) return json({ error: "Pending parent not found" }, 404);
+  if (!str(pendingParent.email)) {
+    return json({ error: "An email is required before this family can be promoted to an account" }, 400);
+  }
+
+  // createAccount owns signup, the welcome email, and the recovery bookkeeping.
+  // Its failures are returned untouched so the placeholder survives and the
+  // admin can retry.
+  const accountRes = await createAccount(ctx, {
+    email: str(pendingParent.email),
+    display_name: str(pendingParent.parent_name),
+  });
+  if (accountRes.status !== 200) return accountRes;
+  const accountPayload = await accountRes.json();
+  const userId = accountPayload.account && accountPayload.account.user_id;
+  if (!userId) return json({ error: "Could not create the account. The family was left unchanged." }, 502);
+
+  const { students_claimed } = await mergePendingParent(ctx, { pendingParent, userId });
+  return json({ ...accountPayload, students_claimed }, 200);
 }
 
 export async function sendWelcomeEmail(ctx, { email, parentName }) {
