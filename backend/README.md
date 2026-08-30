@@ -52,6 +52,22 @@ Do not commit the user ID, add it to frontend configuration, or store it in
 source files. `deploy.sh` sends it as encrypted function environment
 configuration for `admin-manage`.
 
+### Pending families
+
+A family the admin has recorded but that owns no account yet lives in
+`pending_parents`; its students carry `pending_parent_id` with `user_id` NULL.
+`create-pending-parent` needs only a name. An enrollment needs an email,
+because `enrollments.student_email` is NOT NULL. `promote-pending-parent`
+creates the real account and folds the placeholder in; `claim-enrollments`
+does the same automatically when the family signs up with that email itself.
+`update-account` edits a real profile but never its email, which is the
+account's sign-in identity.
+
+`pending_parents` is admin-only: RLS is enabled with no end-user policies, just
+the service bypass. Note that `schema/apply` creates tables with RLS **off** -
+call `POST /v1/{app_id}/rls/enable` after adding any table, then confirm an
+unauthenticated `GET /v1/{app_id}/{table}` returns `[]`.
+
 ## Checkout flows
 
 - Logged-in: `enroll-guard` (auth required) creates a pending enrollment for
