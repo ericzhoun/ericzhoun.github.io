@@ -1402,93 +1402,150 @@ merged into the user-keyed map so their ids cannot collide."
 ```
 
 ---
-
-### Task 9: Admin UI for pending families
+### Task 9: Accounts list shows and creates pending families
 
 **Files:**
-- Modify: `js/admin.js` (accounts list around line 738, student roster around line 372, student form parent dropdown at line 418)
+- Modify: `js/admin.js` (`accounts()` at line 699, `renderNewAccountForm()` at line 720)
 - Test: `test/admin-accounts.test.mjs`
 
 **Interfaces:**
-- Consumes: `list-accounts` rows with `kind`, `pending_parent_id`, `user_id`, `email`, `name`, `student_count` from Task 8; the actions from Tasks 3, 4, 5, and 6.
-- Produces: no exported symbols; UI only.
+- Consumes: `list-accounts` rows with `kind`, `pending_parent_id`, `user_id`, `email`, `name`, `student_count`, `enrollment_count` from Task 8; the `create-pending-parent` action from Task 3.
+- Produces: `pendingDetail(pendingParentId, email, name)`, called by the accounts list and implemented in Task 10. Until Task 10 lands, declare it as a stub that renders nothing, so the click handler has a real target.
 
-- [ ] **Step 1: Read the existing accounts view and its test**
+Existing helpers in `js/admin.js`, all already in scope: `esc(value)`, `button(label, action, cls)`, `table(headers, rowsHtml)`, `adminFn(action, body)`, `notify(message)`, `renderNotification()`, `accountViewClick.listen(el, event, handler)`, and `render()`.
 
-Run: `sed -n '700,800p' js/admin.js` and `sed -n '1,60p' test/admin-accounts.test.mjs`
+Note on the test file: `test/admin-accounts.test.mjs` asserts against the **source text** of `js/admin.js`, not a rendered DOM. It reads the file with `readAdmin()` and regex-matches. Follow that style exactly.
 
-Match whatever rendering and dispatch pattern is already there. Do not restructure the file.
+- [ ] **Step 1: Write the failing tests**
 
-- [ ] **Step 2: Write the failing tests**
-
-Follow the existing file's harness exactly - it renders into a DOM stub and asserts on markup. Add cases asserting:
+Append to `test/admin-accounts.test.mjs`:
 
 ```javascript
-test("accounts view marks a pending family and offers promotion", () => {
-  const html = renderAccounts([
-    { kind: "account", user_id: "user-1", pending_parent_id: null, email: "real@example.com", name: "Real Parent", student_count: 1, enrollment_count: 2 },
-    { kind: "pending", user_id: null, pending_parent_id: "pending-1", email: "pending@example.com", name: "Pending Parent", student_count: 2, enrollment_count: 0 },
-  ]);
-
-  assert.match(html, /No account yet/);
-  assert.match(html, /data-pending-parent-id="pending-1"/);
-  assert.match(html, /Promote to account/);
+test("admin.js renders pending families in the accounts list", async () => {
+  const script = await readAdmin();
+  assert.match(script, /a\.kind === "pending"/);
+  assert.match(script, /No account yet/);
 });
 
-test("a pending family with no email cannot be promoted", () => {
-  const html = renderAccounts([
-    { kind: "pending", user_id: null, pending_parent_id: "pending-2", email: null, name: "Name Only", student_count: 1, enrollment_count: 0 },
-  ]);
-
-  assert.match(html, /Promote to account/);
-  assert.match(html, /disabled/);
-  assert.match(html, /email/i);
+test("admin.js routes a pending family to its own detail view", async () => {
+  const script = await readAdmin();
+  assert.match(script, /pending:\$\{esc\(a\.pending_parent_id\)\}/);
+  assert.match(script, /action\.startsWith\("pending:"\)/);
 });
 
-test("a real account's email is not editable", () => {
-  const html = renderParentForm({ kind: "account", user_id: "user-1", email: "real@example.com", name: "Real Parent" });
-  assert.match(html, /readonly|disabled/);
+test("admin.js has a create-pending-parent form that does not require an email", async () => {
+  const script = await readAdmin();
+  assert.match(script, /create-pending-parent/);
+  // The email input must not carry the required attribute, since the whole
+  // point of a pending family is that the admin may only know a name.
+  assert.doesNotMatch(script, /name="email" type="email" required><\/label>\s*<label>Parent name<input name="parent_name"/);
 });
 ```
 
-Adapt `renderAccounts` and `renderParentForm` to the real exported names found in Step 1. If the existing test file drives the DOM rather than returning HTML, follow that instead and assert on `container.innerHTML`.
-
-- [ ] **Step 3: Run the tests to verify they fail**
+- [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test test/admin-accounts.test.mjs 2>&1 | grep -E "^. (tests|pass|fail)"`
 
-Expected: 3 failures.
+Expected: 3 failures on the first two tests' assertions (the third's `doesNotMatch` passes trivially at this stage, which is fine - it exists to lock the behavior in once the form is written).
 
-- [ ] **Step 4: Implement the UI**
+- [ ] **Step 3: Render both kinds in the accounts list**
 
-Four changes, all following the file's existing patterns:
-
-1. **Accounts list.** Render a `pending` row with the existing `status-pending` badge reading `No account yet`, keyed by `data-pending-parent-id` where real rows use `data-user-id`.
-2. **Add family button.** A form posting `create-pending-parent` with `parent_name` required and `email` optional, labelled to say the email can be added later.
-3. **Parent form.** One form for both kinds. When `kind === "account"`, render the email input `readonly` with the note `Email cannot be changed here - it is the account's sign-in identity.` and submit `update-account`. When `kind === "pending"`, the email is editable and it submits `update-pending-parent`.
-4. **Promote button.** On pending rows only, posting `promote-pending-parent` with the placeholder id. Disabled when `email` is falsy, with the title `Add an email before promoting this family to an account.` On success, re-fetch the accounts list.
-
-Then extend the student form's parent dropdown (line 418) so placeholders are selectable. Keep the bare-standalone option, since a student with no family at all is still legal:
+Replace the body of `accounts()` from `const rows = ...` through the end of its click handler:
 
 ```javascript
-`<label>Parent account<select name="owner">
-  <option value="">No parent account yet (standalone)</option>
-  ${pendingOptions}
-  ${parentOptions}
-</select></label>`
+  const rows = list.map((a) => {
+    const pending = a.kind === "pending";
+    const label = pending
+      ? `${esc(a.name || "-")} <span class="status-badge status-pending">No account yet</span>`
+      : esc(a.name || "-");
+    const target = pending ? `pending:${esc(a.pending_parent_id)}` : `account:${esc(a.user_id)}`;
+    return `<tr>
+    <td>${label}</td><td>${esc(a.email || "-")}</td>
+    <td>${a.student_count}</td><td>${a.enrollment_count}</td>
+    <td>${button("Manage", target)}</td>
+  </tr>`;
+  }).join("");
+  app.innerHTML = `<div class="admin-crud-header"><h1>Accounts</h1><div class="admin-header-actions">${button("+ New family", "new-pending-parent", "btn btn-sm btn-secondary")}${button("+ New account", "new-account")}</div></div>
+    <div id="form-slot"></div>
+    ${table(["Parent", "Email", "Students", "Enrollments", "Actions"], rows)}`;
+  accountViewClick.listen(app, "click", async (event) => {
+    const action = event.target.dataset.action || "";
+    if (action === "new-account") { renderNewAccountForm(); return; }
+    if (action === "new-pending-parent") { renderNewPendingParentForm(); return; }
+    if (action.startsWith("pending:")) {
+      const pendingParentId = action.slice("pending:".length);
+      const family = list.find((a) => a.pending_parent_id === pendingParentId);
+      if (family) await pendingDetail(family.pending_parent_id, family.email, family.name);
+      return;
+    }
+    if (action.startsWith("account:")) {
+      const userId = action.slice("account:".length);
+      const account = list.find((a) => a.user_id === userId);
+      if (account) await accountDetail(account.user_id, account.email, account.name);
+    }
+  });
 ```
 
-Give placeholder options a `pending:` prefix in their value (`pending:<id>`) and real accounts a `user:` prefix, then split on the prefix when submitting to send either `pending_parent_id` or `user_id`. That keeps one control while the backend keeps its xor.
+- [ ] **Step 4: Add the create form**
 
-- [ ] **Step 5: Run the tests to verify they pass**
+Insert directly after `renderNewAccountForm()`. It mirrors that function's shape, differing in that no email is required and no account or email is created.
+
+```javascript
+// A family the admin has met but who has no account yet. Only a name is
+// required: the email often arrives later, and the family can hold students,
+// notes, and attendance in the meantime.
+function renderNewPendingParentForm() {
+  document.querySelector("#form-slot").innerHTML = `<form id="record-form" class="admin-form">
+    <h3>New family</h3><p class="auth-error" id="form-error" hidden></p>
+    <label>Parent name<input name="parent_name" required></label>
+    <label>Email (optional)<input name="email" type="email"></label>
+    <label>Phone<input name="student_phone"></label>
+    <p class="hint">No account is created and no email is sent. Add the email later, then promote the family to a real account.</p>
+    <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save family</button>
+    <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div>
+  </form>`;
+  const formEl = document.querySelector("#record-form");
+  const errorEl = formEl.querySelector("#form-error");
+  formEl.querySelector('[data-action="cancel-form"]').addEventListener("click", () => render());
+  formEl.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const saveButton = formEl.querySelector("[data-save-button]");
+    saveButton.disabled = true; saveButton.textContent = "Saving…"; errorEl.hidden = true;
+    const data = Object.fromEntries(new FormData(e.currentTarget));
+    try {
+      const res = await adminFn("create-pending-parent", {
+        parent_name: data.parent_name,
+        email: data.email || undefined,
+        student_phone: data.student_phone || undefined,
+      });
+      notify("Family saved.");
+      await pendingDetail(res.pending_parent.id, res.pending_parent.email, res.pending_parent.parent_name);
+    } catch (error) {
+      errorEl.textContent = error.code === "ACCOUNT_EXISTS"
+        ? "An account already exists for this email. Open it from the Accounts list instead."
+        : (error.message || "Could not save the family.");
+      errorEl.hidden = false;
+      saveButton.disabled = false; saveButton.textContent = "Save family";
+    }
+  });
+}
+```
+
+- [ ] **Step 5: Add the Task 10 stub so the click handler resolves**
+
+Add directly above `renderNewPendingParentForm`, to be replaced wholesale in Task 10:
+
+```javascript
+// Implemented in full below; declared here so the accounts list can route to
+// it. Replaced in the pending-family detail task.
+async function pendingDetail(pendingParentId, email, name) {
+  app.innerHTML = `<h1>${esc(name || "Family")}</h1><p class="muted">${esc(email || "")}</p>`;
+}
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `node --test test/admin-accounts.test.mjs 2>&1 | grep -E "^. (tests|pass|fail)"`
-
-Expected: `fail 0`.
-
-- [ ] **Step 6: Run the whole suite**
-
-Run: `node --test 'test/*.test.mjs' 2>&1 | grep -E "^. (tests|pass|fail)"`
 
 Expected: `fail 0`.
 
@@ -1496,16 +1553,234 @@ Expected: `fail 0`.
 
 ```bash
 git add js/admin.js test/admin-accounts.test.mjs
-git commit -m "feat: manage pending families from the admin accounts page
+git commit -m "feat: show and create pending families in the accounts list
 
-One parent form serves both kinds; a real account's email is read-only
-because it is the sign-in identity. Promotion is offered only once an email
-is on file."
+A family with no account yet carries the No account yet badge and routes to
+its own detail view. Creating one needs a name only - no account is made and
+no email is sent."
 ```
 
 ---
 
-### Task 10: Deploy and verify end to end
+### Task 10: Pending family detail view
+
+**Files:**
+- Modify: `js/admin.js` (replace the `pendingDetail` stub from Task 9)
+- Test: `test/admin-accounts.test.mjs`
+
+**Interfaces:**
+- Consumes: `update-pending-parent`, `add-student`, `update-student`, `create-enrollment`, `promote-pending-parent` from Tasks 3, 5, and 6; `adminData.read("students", ...)` filtered on `pending_parent_id`, which Task 8 Step 4 added to the allowed filters.
+- Produces: nothing new.
+
+This mirrors `accountDetail` but keys students on `pending_parent_id` and drops what a placeholder cannot have: no enrollments list keyed to a user, no onboarding resend. It gains an edit form and a promote button.
+
+- [ ] **Step 1: Write the failing tests**
+
+```javascript
+test("admin.js pending detail wires the pending-family actions", async () => {
+  const script = await readAdmin();
+  for (const action of ["update-pending-parent", "promote-pending-parent"]) {
+    assert.match(script, new RegExp(action));
+  }
+  assert.match(script, /pending_parent_id: pendingParentId/);
+});
+
+test("admin.js only offers promotion once an email is on file", async () => {
+  const script = await readAdmin();
+  assert.match(script, /Add an email before promoting/);
+});
+
+test("admin.js reads a pending family's students by pending_parent_id", async () => {
+  const script = await readAdmin();
+  assert.match(script, /field: "pending_parent_id", operator: "eq", value: pendingParentId/);
+});
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `node --test test/admin-accounts.test.mjs 2>&1 | grep -E "^. (tests|pass|fail)"`
+
+Expected: 3 failures.
+
+- [ ] **Step 3: Replace the stub with the real view**
+
+Replace the whole `pendingDetail` stub added in Task 9:
+
+```javascript
+// The placeholder equivalent of accountDetail. Students are keyed on
+// pending_parent_id rather than user_id, and the actions a family without an
+// account cannot have - onboarding resend, credit editing on user-owned
+// enrollments - are absent. Promotion is the way out of this view.
+async function pendingDetail(pendingParentId, email, name) {
+  const [students, schedules, programs] = await Promise.all([
+    adminData.read("students", {
+      filters: [{ field: "pending_parent_id", operator: "eq", value: pendingParentId }],
+      order: [{ field: "created_at", direction: "desc" }],
+    }),
+    adminData.read("class_schedules", {
+      filters: [{ field: "active", operator: "eq", value: true }],
+      order: [{ field: "created_at", direction: "desc" }],
+    }),
+    adminData.read("programs", { order: [{ field: "sort_order", direction: "asc" }] }),
+  ]);
+  const programName = (id) => programs.find((p) => p.id === id)?.name || "-";
+  const scheduleLabel = (s) => `${programName(s.program_id)} - ${s.day_of_week} ${formatTime(s.start_time)} (${s.age_group})`;
+  const studentRows = students.map((s) => `<tr>
+    <td>${esc(s.name)}</td><td>${esc(s.age ?? "-")}</td><td>${esc(s.dob ?? "-")}</td>
+    <td>${button("Edit", `edit-student:${esc(s.id)}`)}</td></tr>`).join("");
+  const studentOptions = students.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+  const scheduleOptions = schedules.map((s) => `<option value="${esc(s.id)}">${esc(scheduleLabel(s))}</option>`).join("");
+
+  const promoteButton = email
+    ? button("Promote to account", "promote-pending", "btn btn-sm btn-secondary")
+    : `<button class="btn btn-sm btn-secondary" disabled title="Add an email before promoting this family to an account.">Promote to account</button>`;
+
+  app.innerHTML = `<div class="admin-crud-header">
+      <h1>${esc(name || "Family")} <span class="status-badge status-pending">No account yet</span></h1>
+      <div class="admin-header-actions">${promoteButton}${button("Edit family", "edit-pending")}${button("← Back to Accounts", "back-to-accounts")}</div></div>
+    <p class="muted">${esc(email || "No email on file")}</p>
+    <p class="muted">Attendance, credits, and 请假 (leave) are recorded standalone until this family has an account.</p>
+    <div id="form-slot"></div>
+    <section><div class="admin-crud-header"><h2>Students</h2>${button("+ Add student", "add-student-form")}</div>
+      ${table(["Name", "Age", "DOB", "Actions"], studentRows)}</section>
+    <section><div class="admin-crud-header"><h2>Enrollments</h2>
+      ${students.length ? button("+ Comp enrollment", "add-enrollment-form") : ""}</div>
+      <p class="muted">Comped enrollments for this family are listed on the Enrollments page until the family has an account.</p></section>`;
+  renderNotification();
+
+  const slot = () => document.querySelector("#form-slot");
+
+  function bindFormEl(onSubmit) {
+    const formEl = document.querySelector("#record-form");
+    const errorEl = formEl.querySelector("#form-error");
+    formEl.querySelector('[data-action="cancel-form"]').addEventListener("click", () => pendingDetail(pendingParentId, email, name));
+    formEl.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const saveButton = formEl.querySelector("[data-save-button]");
+      saveButton.disabled = true; saveButton.textContent = "Saving…"; errorEl.hidden = true;
+      try {
+        await onSubmit(Object.fromEntries(new FormData(e.currentTarget)));
+        await pendingDetail(pendingParentId, email, name);
+      } catch (error) {
+        errorEl.textContent = error.code === "ACCOUNT_EXISTS"
+          ? "An account already exists for this email."
+          : (error.message || "Could not save. Please try again.");
+        errorEl.hidden = false; saveButton.disabled = false; saveButton.textContent = "Save";
+      }
+    });
+  }
+
+  accountViewClick.listen(app, "click", async (event) => {
+    const action = event.target.dataset.action || "";
+    if (action === "back-to-accounts") { await accounts(); return; }
+
+    if (action === "promote-pending") {
+      const promote = event.target;
+      promote.disabled = true;
+      promote.textContent = "Promoting…";
+      try {
+        const result = await adminFn("promote-pending-parent", { id: pendingParentId });
+        notify(`Account created. ${result.students_claimed} student(s) moved across.`);
+        await accountDetail(result.account.user_id, result.account.email, result.account.name, result);
+      } catch (error) {
+        alert(error.message || "Could not promote this family.");
+        promote.disabled = false;
+        promote.textContent = "Promote to account";
+      }
+      return;
+    }
+
+    if (action === "edit-pending") {
+      slot().innerHTML = `<form id="record-form" class="admin-form">
+        <h3>Edit family</h3><p class="auth-error" id="form-error" hidden></p>
+        <label>Parent name<input name="parent_name" required value="${esc(name || "")}"></label>
+        <label>Email<input name="email" type="email" value="${esc(email || "")}"></label>
+        <p class="hint">Adding an email lets you enroll this family's students and promote them to an account.</p>
+        <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
+      bindFormEl(async (data) => {
+        const result = await adminFn("update-pending-parent", {
+          id: pendingParentId,
+          parent_name: data.parent_name,
+          email: data.email || null,
+        });
+        notify("Family updated.");
+        // The header reads from the arguments, so refresh them before the
+        // re-render bindFormEl performs.
+        email = result.pending_parent.email;
+        name = result.pending_parent.parent_name;
+      });
+      return;
+    }
+
+    if (action === "add-student-form" || action.startsWith("edit-student:")) {
+      const editing = action.startsWith("edit-student:") ? students.find((s) => s.id === action.split(":")[1]) : null;
+      slot().innerHTML = `<form id="record-form" class="admin-form">
+        <h3>${editing ? "Edit student" : "Add student"}</h3><p class="auth-error" id="form-error" hidden></p>
+        <label>Name<input name="name" required value="${esc(editing?.name || "")}"></label>
+        <label>Date of birth<input name="dob" type="date" required value="${esc((editing?.dob || "").slice(0, 10))}"></label>
+        <label>Notes<textarea name="notes">${esc(editing?.notes || "")}</textarea></label>
+        <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
+      bindFormEl(async (data) => {
+        if (editing) await adminFn("update-student", { id: editing.id, name: data.name, dob: data.dob, notes: data.notes });
+        else await adminFn("add-student", { pending_parent_id: pendingParentId, name: data.name, dob: data.dob, notes: data.notes });
+        notify(editing ? "Student updated." : "Student added.");
+      });
+      return;
+    }
+
+    if (action === "add-enrollment-form") {
+      slot().innerHTML = `<form id="record-form" class="admin-form">
+        <h3>Comp enrollment</h3><p class="auth-error" id="form-error" hidden></p>
+        <label>Student<select name="student_id" required>${studentOptions}</select></label>
+        <label>Class<select name="schedule_id" required>${scheduleOptions}</select></label>
+        <label>Number of classes (credits)<input name="num_classes_enrolled" type="number" min="1" required value="8"></label>
+        <label>Email<input name="student_email" type="email" required value="${esc(email || "")}"></label>
+        <p class="hint">An enrollment needs an email. Entering one here saves it to the family too.</p>
+        <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Create</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
+      bindFormEl(async (data) => {
+        await adminFn("create-enrollment", {
+          pending_parent_id: pendingParentId, student_id: data.student_id, schedule_id: data.schedule_id,
+          num_classes_enrolled: Number(data.num_classes_enrolled),
+          student_email: data.student_email, parent_name: name,
+        });
+        notify("Comped enrollment created.");
+        if (!email) email = data.student_email;
+      });
+      return;
+    }
+  });
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `node --test test/admin-accounts.test.mjs 2>&1 | grep -E "^. (tests|pass|fail)"`
+
+Expected: `fail 0`.
+
+- [ ] **Step 5: Run the whole suite**
+
+Run: `node --test 'test/*.test.mjs' 2>&1 | grep -E "^. (tests|pass|fail)"`
+
+Expected: `fail 0`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add js/admin.js test/admin-accounts.test.mjs
+git commit -m "feat: manage a pending family's students and promote it
+
+Mirrors accountDetail but keys students on pending_parent_id and drops what
+a family without an account cannot have. Promotion is disabled with a stated
+reason until an email is on file."
+```
+
+---
+
+### Task 11: Deploy and verify end to end
 
 **Files:**
 - Modify: `backend/README.md` (document the new actions in the checkout/admin section)
@@ -1586,8 +1861,9 @@ git commit -m "docs: document pending families in the backend README"
 | Merge routine, `promote-pending-parent` | 6 |
 | Self-serve claim through `claim-enrollments` | 7 |
 | `list-accounts` union, `admin-data` read-only resource | 8 |
-| Admin UI: badge, one form, promote button, parent dropdown | 9 |
-| Hand-verified RLS check | 2 (probe) and 10 (with real data) |
+| Admin UI: badge, create form, accounts list routing | 9 |
+| Admin UI: pending detail, edit form, promote button | 10 |
+| Hand-verified RLS check | 2 (probe) and 11 (with real data) |
 | Testing cases 1-6 | 3, 4, 5, 6, 7, 8 |
 
 No spec requirement is unassigned. Task 1 is extra, covering pre-existing test debt that would otherwise make every later "run the suite" step ambiguous.
@@ -1596,5 +1872,7 @@ No spec requirement is unassigned. Task 1 is extra, covering pre-existing test d
 
 - `PENDING_FIELDS` is defined once in `admin-manage.js` (Task 3) and reused by Tasks 4 and 6; `claim-enrollments.js` declares its own copy (Task 7) because functions are single-file.
 - `mergePendingParent(ctx, { pendingParent, userId })` returns `{ students_claimed }`; `promotePendingParent` spreads it into its response. `claim-enrollments` returns `claimed_students` (an array of ids) - deliberately a different name and type, because one is a count for the admin and the other is a list for the parent's session.
-- `list-accounts` row fields (`kind`, `user_id`, `pending_parent_id`, `email`, `name`, `student_count`, `enrollment_count`) are produced in Task 8 and consumed under those exact names in Task 9.
+- `list-accounts` row fields (`kind`, `user_id`, `pending_parent_id`, `email`, `name`, `student_count`, `enrollment_count`) are produced in Task 8 and consumed under those exact names in Tasks 9 and 10.
+- `pendingDetail(pendingParentId, email, name)` is stubbed in Task 9 Step 5 and replaced wholesale in Task 10 Step 3. The signature is identical in both.
+- `test/admin-accounts.test.mjs` asserts against the source text of `js/admin.js`, not a rendered DOM. Tasks 9 and 10 follow that existing style.
 - `assertEmailFree(ctx, email)` is defined in Task 3 and called in Tasks 3 only; Task 6 does not need it, since `createAccount` performs its own duplicate check against the auth service.
