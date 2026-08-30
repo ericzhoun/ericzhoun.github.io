@@ -1,5 +1,7 @@
 .worktrees/
 .DS_Store
+.env
+.env.*
 backend/roster.json
 backend/user_map.json
 __pycache__/
