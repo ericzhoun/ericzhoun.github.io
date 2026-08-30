@@ -26,6 +26,37 @@ BUTTERBASE_API_KEY=bb_sk_... ./backend/deploy.sh guest-enroll   # one
 The key is the app service key (Butterbase dashboard). It bypasses RLS;
 never commit it or ship it to the frontend.
 
+### Deploy from WSL, not Git Bash, on Windows
+
+`deploy.sh` does not run under Git Bash. Two independent reasons:
+
+- It writes the deploy payload, which contains `SERVICE_KEY`, to a temp file
+  and aborts with `deploy payload permissions are not private` unless the mode
+  is `0600`. Windows reports `0666` however the file is created, so the check
+  can never pass there. The check is right and Windows genuinely cannot offer
+  the protection it wants - do not relax it to work around this.
+- With `core.autocrlf` on, the working tree is CRLF and Linux bash fails on
+  `set -o pipefail\r`, so the script also needs its line endings normalized
+  before a Linux shell will read it.
+
+Run it from WSL against a CR-stripped copy. `$0` sets the functions directory,
+so the copy has to sit in `backend/`:
+
+```bash
+set -a; . ./.env; set +a
+tr -d '\r' < backend/deploy.sh > backend/.deploy-lf.sh
+wsl.exe -d Ubuntu-22.04 -- bash -c "cd /mnt/d/workplace/ericzhoun.github.io && \
+  BUTTERBASE_API_KEY='$BUTTERBASE_API_KEY' \
+  INVITATION_GMAIL_USER_ID='$INVITATION_GMAIL_USER_ID' \
+  bash ./backend/.deploy-lf.sh admin-manage"
+rm -f backend/.deploy-lf.sh
+```
+
+The payload lands in WSL's `/tmp`, which is ext4, so `0600` holds there. From
+Git Bash, prefix the `wsl.exe` call with `MSYS_NO_PATHCONV=1` or it rewrites
+`/mnt/...` into a Windows path. On macOS or Linux, none of this applies - just
+run `./backend/deploy.sh` directly.
+
 `trigger-schedule-bake` additionally needs a `GITHUB_TOKEN` (a fine-grained
 PAT scoped to this repo with Actions: write) in the environment when
 deploying it, so it can dispatch the `bake-schedule.yml` workflow on the
