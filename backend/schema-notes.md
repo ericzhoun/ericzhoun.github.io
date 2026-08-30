@@ -4,6 +4,18 @@ Applied via `POST /v1/app_48ul5eszfv7v/schema/apply` (full-schema declarative
 payload; the endpoint treats omitted tables as drops and refuses them without
 `_drop`, so always send the complete schema from `GET /schema`).
 
+## 2026-08-29 - students nullable user_id (no-op)
+
+- `backend/migrations/2026-08-29-students-nullable-user-id.sql` targets
+  `students.user_id DROP NOT NULL` for admin-managed standalone students.
+  Checked live: `GET /schema` already omits `nullable: false` for this
+  column, `schema/apply` reports "up to date", and a probe insert with
+  `user_id: null` succeeded (id `99ad62c5-0486-4a18-bdd0-25f4ee7f7d88`,
+  deleted after verification). Column was already nullable in the live DB;
+  no `schema/apply` call changed anything. The migration file's `COMMENT ON
+  COLUMN` isn't reachable through the declarative schema endpoint and was
+  skipped as cosmetic.
+
 ## 2026-07-15 - guest checkout (migration_id 21)
 
 - `enrollments.user_id` made nullable (guest enrollments are unclaimed until
