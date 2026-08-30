@@ -772,15 +772,23 @@ async function mergePendingParent(ctx, { pendingParent, userId }) {
     });
   }
 
-  const repointed = await data(
+  // The data API mutates by path only - PATCH against a filter query is a 404
+  // ("Route PATCH:/students?pending_parent_id=eq... not found"), so the ids are
+  // read first and each row is patched by id.
+  const owned = rows(await data(
     ctx,
-    `students?pending_parent_id=eq.${encodeURIComponent(pendingParent.id)}`,
-    { method: "PATCH", body: { user_id: userId, pending_parent_id: null } },
-  );
+    `students?pending_parent_id=eq.${encodeURIComponent(pendingParent.id)}&select=id`,
+  ));
+  for (const student of owned) {
+    await data(ctx, `students/${encodeURIComponent(student.id)}`, {
+      method: "PATCH",
+      body: { user_id: userId, pending_parent_id: null },
+    });
+  }
 
   await data(ctx, `pending_parents/${encodeURIComponent(pendingParent.id)}`, { method: "DELETE" });
 
-  return { students_claimed: rows(repointed).length };
+  return { students_claimed: owned.length };
 }
 
 // The admin has the family's email at last: create the real account (which

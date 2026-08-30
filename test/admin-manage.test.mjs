@@ -1329,11 +1329,47 @@ test("promote-pending-parent creates the account, repoints students, and deletes
   assert.equal(payload.students_claimed, 2);
 
   const calls = dataCalls(res);
-  const repoint = calls.find((call) => call.method === "PATCH" && call.url.includes("students"));
-  assert.ok(repoint.url.includes("pending_parent_id=eq.pending-1"));
-  assert.equal(repoint.body.user_id, "user-new");
-  assert.equal(repoint.body.pending_parent_id, null);
+  // The data API mutates by path only. An earlier version patched
+  // students?pending_parent_id=eq.<id> and the live API answered 404, which the
+  // stub could not catch because it answers any URL. So assert one PATCH per
+  // student id, by path.
+  const repoints = calls.filter((call) => call.method === "PATCH" && call.url.includes("students"));
+  assert.deepEqual(repoints.map((call) => call.url.split("/students/")[1]), ["student-1", "student-2"]);
+  for (const repoint of repoints) {
+    assert.equal(repoint.body.user_id, "user-new");
+    assert.equal(repoint.body.pending_parent_id, null);
+  }
   assert.ok(calls.some((call) => call.method === "DELETE" && call.url.includes("pending_parents/pending-1")));
+});
+
+// Guards the whole function against the filter-mutation mistake above: the data
+// API accepts POST on a collection, but PATCH and DELETE only by path.
+test("admin-manage never mutates through a filter query", async () => {
+  const actions = [
+    { action: "promote-pending-parent", id: "pending-1" },
+    { action: "update-pending-parent", id: "pending-1", parent_name: "X" },
+    { action: "update-account", user_id: "user-1", parent_name: "X" },
+    { action: "update-student", id: "student-1", name: "X", dob: "2016-05-04" },
+  ];
+  for (const body of actions) {
+    const res = await callHandler(request(body), {
+      respond: (url, call) => {
+        if (url.includes("pending_parents") && call.method === "GET") {
+          return { body: [{ id: "pending-1", parent_name: "Wei Chen", email: "wei@example.com" }] };
+        }
+        if (url.includes("/signup")) return { body: { user: { id: "user-new" } } };
+        if (url.includes("students")) return { body: [{ id: "student-1" }] };
+        return { body: [{ user_id: "user-1" }] };
+      },
+    });
+    for (const call of dataCalls(res)) {
+      if (call.method !== "PATCH" && call.method !== "DELETE") continue;
+      assert.ok(
+        !call.url.includes("=eq."),
+        `${body.action} sent ${call.method} to a filter query the API rejects: ${call.url}`,
+      );
+    }
+  }
 });
 
 test("promote-pending-parent refuses a placeholder with no email", async () => {
