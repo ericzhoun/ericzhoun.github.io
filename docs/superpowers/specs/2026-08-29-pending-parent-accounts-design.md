@@ -163,19 +163,30 @@ Idempotent: a second run finds no placeholder. The response gains a
 
 ## Testing
 
-The backend functions have no test harness, so verification is a scripted
-end-to-end run against the live app with the service key, asserting DB state
-through the REST API at each step and cleaning up its own rows:
+The project runs `node:test` suites in `test/*.test.mjs` that import a
+function's `handler` directly and stub `global.fetch` and `ctx.db`, so every
+action below is unit-testable without touching the live app. New cases extend
+`test/admin-manage.test.mjs` and a new `test/claim-enrollments.test.mjs`.
 
-1. Create a placeholder, add two students to it, edit the placeholder.
-2. Attempt to enroll with no email recorded → rejected; supply one → succeeds.
-3. Sign up as that email and verify → both students carry the new `user_id`,
-   `pending_parent_id` is NULL, `parent_profiles` is populated, placeholder
-   gone.
-4. Re-run the claim → no change (idempotence).
+Run with `node --test 'test/*.test.mjs'` - quote the glob, since bare
+`node --test test/` does not expand it on Windows.
 
-Negative cases: a placeholder email shadowing an existing account 409s;
-`user_id` and `pending_parent_id` together is rejected; a placeholder deleted
-while holding students leaves those students bare standalone, not deleted.
+Cases:
 
-Verified separately by hand: a parent session cannot read `pending_parents`.
+1. `create-pending-parent` inserts with a normalized email; a name-only
+   placeholder is accepted; an email already held by `parent_profiles` 409s.
+2. `update-pending-parent` patches fields and re-runs the shadowing check.
+3. `update-account` patches `parent_profiles` and **ignores an `email` key** in
+   the body rather than writing it.
+4. `add-student` and `create-enrollment` reject `user_id` and
+   `pending_parent_id` together; `create-enrollment` rejects a placeholder with
+   no email available and succeeds when one is supplied, writing it back.
+5. `list-accounts` returns both kinds with correct `kind` tags and student
+   counts drawn from the right column.
+6. `promote-pending-parent` and the `claim-enrollments` path both run the merge:
+   students repointed, `pending_parent_id` cleared, profile filled without
+   clobbering fields the parent already set, placeholder deleted. Re-running the
+   claim is a no-op.
+
+Verified by hand against the live app, since RLS is not exercised by the stubs:
+a parent session cannot read `pending_parents`.
