@@ -70,7 +70,11 @@ test("guest-enroll persists parent_name onto the created enrollment", async () =
   }
 });
 
-test("guest-enroll floors an out-of-range low num_classes_enrolled to the 15 default", async () => {
+// The early-bird discount is date-gated, so the clock is pinned before
+// EARLY_BIRD_DEADLINE. Without this the test asserts a discount that stopped
+// applying on 2026-08-15 and fails on every later day.
+test("guest-enroll floors an out-of-range low num_classes_enrolled to the 15 default", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-08-01T00:00:00Z") });
   const { ctx } = makeCtx([
     { rows: [{ id: "sched-1", program_id: "prog-1", program_name: "Ballet", program_num_classes: 8, price_cents: 3000, max_seats: 10 }] },
     { rows: [{ held: "2" }] },
@@ -102,7 +106,11 @@ test("guest-enroll floors an out-of-range low num_classes_enrolled to the 15 def
   }
 });
 
-test("guest-enroll caps num_classes_enrolled at max(program.num_classes, 15)", async () => {
+// The early-bird discount is date-gated, so the clock is pinned before
+// EARLY_BIRD_DEADLINE. Without this the test asserts a discount that stopped
+// applying on 2026-08-15 and fails on every later day.
+test("guest-enroll caps num_classes_enrolled at max(program.num_classes, 15)", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-08-01T00:00:00Z") });
   const { ctx } = makeCtx([
     { rows: [{ id: "sched-1", program_id: "prog-1", program_name: "Ballet", program_num_classes: 20, price_cents: 3000, max_seats: 10 }] },
     { rows: [{ held: "2" }] },
