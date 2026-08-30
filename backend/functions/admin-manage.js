@@ -42,6 +42,10 @@ export async function handler(req, ctx) {
     switch (body.action) {
       case "create-account":
         return await createAccount(ctx, body);
+      case "create-pending-parent":
+        return await createPendingParent(ctx, body);
+      case "update-pending-parent":
+        return await updatePendingParent(ctx, body);
       case "add-student":
         return await addStudent(ctx, body);
       case "update-student":
@@ -628,6 +632,77 @@ async function createAccount(ctx, body) {
     recovery_persisted: recoveryPersisted,
     recovery_required: !profileSaved || !welcomeSent,
   }, 200);
+}
+
+// A placeholder family: recorded and editable before the family owns an
+// account. Only parent_name is required - the admin often starts with a name
+// from a walk-in and learns the email later. Students attach through
+// students.pending_parent_id while their user_id stays NULL.
+const PENDING_FIELDS = ["parent_name", "student_phone", "emergency_contact", "allergies"];
+
+// A placeholder must never shadow a real account, or promoting it would
+// collide on the auth email and the admin would be editing a record the
+// parent cannot see. Skipped entirely when no email is being set.
+async function assertEmailFree(ctx, email) {
+  if (!email) return null;
+  const existing = rows(await data(
+    ctx,
+    `parent_profiles?email=eq.${encodeURIComponent(email)}&select=user_id,parent_name`,
+  ))[0];
+  if (!existing) return null;
+  return json({
+    error: "An account already exists for this email.",
+    code: "ACCOUNT_EXISTS",
+    user_id: existing.user_id,
+    parent_name: str(existing.parent_name),
+  }, 409);
+}
+
+async function createPendingParent(ctx, body) {
+  assertOnlyKeys(body, ["action", "email", ...PENDING_FIELDS]);
+  const parentName = str(body.parent_name);
+  if (!parentName) return json({ error: "Parent name is required" }, 400);
+  if (parentName.length > 200) return json({ error: "Parent name is too long" }, 400);
+
+  const email = normalizeEmail(body.email);
+  if (body.email && !email) return json({ error: "A valid email is required" }, 400);
+  const conflict = await assertEmailFree(ctx, email);
+  if (conflict) return conflict;
+
+  const fields = {};
+  for (const key of PENDING_FIELDS) {
+    const value = str(body[key]);
+    if (value !== null) fields[key] = value;
+  }
+  if (email) fields.email = email;
+
+  const created = await data(ctx, "pending_parents", { method: "POST", body: fields });
+  return json({ pending_parent: rows(created)[0] || null }, 200);
+}
+
+async function updatePendingParent(ctx, body) {
+  assertOnlyKeys(body, ["action", "id", "email", ...PENDING_FIELDS]);
+  const id = str(body.id);
+  if (!id) return json({ error: "Pending parent id is required" }, 400);
+
+  const fields = {};
+  for (const key of PENDING_FIELDS) {
+    if (body[key] !== undefined) fields[key] = str(body[key]);
+  }
+  if (body.email !== undefined) {
+    const email = normalizeEmail(body.email);
+    if (body.email && !email) return json({ error: "A valid email is required" }, 400);
+    const conflict = await assertEmailFree(ctx, email);
+    if (conflict) return conflict;
+    fields.email = email;
+  }
+  // The column defaults to now() only on insert, so the timestamp is explicit.
+  fields.updated_at = new Date().toISOString();
+
+  const updated = await data(ctx, `pending_parents/${encodeURIComponent(id)}`, { method: "PATCH", body: fields });
+  const pendingParent = rows(updated)[0];
+  if (!pendingParent) return json({ error: "Pending parent not found" }, 404);
+  return json({ pending_parent: pendingParent }, 200);
 }
 
 export async function sendWelcomeEmail(ctx, { email, parentName }) {

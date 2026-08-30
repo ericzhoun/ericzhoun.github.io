@@ -1047,3 +1047,105 @@ test("admin-data allows parent_profiles reads for the roster and blocks writes",
   }));
   assert.equal(write.status, 400);
 });
+
+// ---- pending parents ----
+
+test("create-pending-parent inserts a placeholder with a normalized email", async () => {
+  const res = await callHandler(request({
+    action: "create-pending-parent",
+    parent_name: "Wei Chen",
+    email: "  Wei.Chen@Example.COM ",
+    student_phone: "555-0100",
+  }), {
+    respond: (url) => {
+      if (url.includes("parent_profiles")) return { body: [] };
+      if (url.includes("pending_parents")) return { body: [{ id: "pending-1", parent_name: "Wei Chen", email: "wei.chen@example.com" }] };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).pending_parent.id, "pending-1");
+  const insert = dataCalls(res).find((call) => call.method === "POST" && call.url.includes("pending_parents"));
+  assert.equal(insert.body.email, "wei.chen@example.com");
+  assert.equal(insert.body.parent_name, "Wei Chen");
+});
+
+test("create-pending-parent accepts a placeholder with no email at all", async () => {
+  const res = await callHandler(request({
+    action: "create-pending-parent",
+    parent_name: "Name Only",
+  }), {
+    respond: (url) => url.includes("pending_parents")
+      ? { body: [{ id: "pending-2", parent_name: "Name Only", email: null }] }
+      : { body: [] },
+  });
+
+  assert.equal(res.status, 200);
+  const insert = dataCalls(res).find((call) => call.method === "POST");
+  assert.equal(insert.body.email, undefined);
+  // A name-only placeholder must not trigger the shadowing lookup.
+  assert.equal(dataCalls(res).some((call) => call.url.includes("parent_profiles")), false);
+});
+
+test("create-pending-parent requires a parent name", async () => {
+  const res = await callHandler(request({ action: "create-pending-parent", email: "a@example.com" }));
+  assert.equal(res.status, 400);
+});
+
+test("create-pending-parent refuses an email that already has a real account", async () => {
+  const res = await callHandler(request({
+    action: "create-pending-parent",
+    parent_name: "Duplicate",
+    email: "taken@example.com",
+  }), {
+    respond: (url) => url.includes("parent_profiles")
+      ? { body: [{ user_id: "user-9", email: "taken@example.com", parent_name: "Real Parent" }] }
+      : { body: [] },
+  });
+
+  assert.equal(res.status, 409);
+  const payload = await res.json();
+  assert.equal(payload.code, "ACCOUNT_EXISTS");
+  assert.equal(payload.user_id, "user-9");
+  assert.equal(dataCalls(res).some((call) => call.method === "POST" && call.url.includes("pending_parents")), false);
+});
+
+test("update-pending-parent patches the requested fields", async () => {
+  const res = await callHandler(request({
+    action: "update-pending-parent",
+    id: "pending-1",
+    parent_name: "Wei Chen",
+    student_phone: "555-0199",
+  }), {
+    respond: (url) => url.includes("pending_parents")
+      ? { body: [{ id: "pending-1", parent_name: "Wei Chen", student_phone: "555-0199" }] }
+      : { body: [] },
+  });
+
+  assert.equal(res.status, 200);
+  const patch = dataCalls(res).find((call) => call.method === "PATCH");
+  assert.ok(patch.url.includes("pending_parents/pending-1"));
+  assert.equal(patch.body.student_phone, "555-0199");
+  assert.ok(patch.body.updated_at);
+});
+
+test("update-pending-parent refuses an email that already has a real account", async () => {
+  const res = await callHandler(request({
+    action: "update-pending-parent",
+    id: "pending-1",
+    email: "taken@example.com",
+  }), {
+    respond: (url) => url.includes("parent_profiles")
+      ? { body: [{ user_id: "user-9", email: "taken@example.com" }] }
+      : { body: [] },
+  });
+
+  assert.equal(res.status, 409);
+  assert.equal(dataCalls(res).some((call) => call.method === "PATCH"), false);
+});
+
+test("update-pending-parent requires an id", async () => {
+  const res = await callHandler(request({ action: "update-pending-parent", parent_name: "No Id" }));
+  assert.equal(res.status, 400);
+});
