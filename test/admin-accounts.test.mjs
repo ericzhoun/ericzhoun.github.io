@@ -99,3 +99,21 @@ test("admin.js has a create-pending-parent form that does not require an email",
   assert.match(script, /create-pending-parent/);
   assert.match(script, /<label>Email \(optional\)<input name="email" type="email"><\/label>/);
 });
+
+test("admin.js pending detail wires the pending-family actions", async () => {
+  const script = await readAdmin();
+  for (const action of ["update-pending-parent", "promote-pending-parent"]) {
+    assert.match(script, new RegExp(action));
+  }
+  assert.match(script, /pending_parent_id: pendingParentId/);
+});
+
+test("admin.js only offers promotion once an email is on file", async () => {
+  const script = await readAdmin();
+  assert.match(script, /Add an email before promoting/);
+});
+
+test("admin.js reads a pending family's students by pending_parent_id", async () => {
+  const script = await readAdmin();
+  assert.match(script, /field: "pending_parent_id", operator: "eq", value: pendingParentId/);
+});

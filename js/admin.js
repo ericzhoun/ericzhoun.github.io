@@ -762,10 +762,151 @@ function renderNewAccountForm() {
   });
 }
 
-// Implemented in full below; declared here so the accounts list can route to
-// it. Replaced in the pending-family detail task.
+// The placeholder equivalent of accountDetail. Students are keyed on
+// pending_parent_id rather than user_id, and the actions a family without an
+// account cannot have - onboarding resend, credit editing on user-owned
+// enrollments - are absent. Promotion is the way out of this view.
 async function pendingDetail(pendingParentId, email, name) {
-  app.innerHTML = `<h1>${esc(name || "Family")}</h1><p class="muted">${esc(email || "")}</p>`;
+  const [students, schedules, programs] = await Promise.all([
+    adminData.read("students", {
+      filters: [{ field: "pending_parent_id", operator: "eq", value: pendingParentId }],
+      order: [{ field: "created_at", direction: "desc" }],
+    }),
+    adminData.read("class_schedules", {
+      filters: [{ field: "active", operator: "eq", value: true }],
+      order: [{ field: "created_at", direction: "desc" }],
+    }),
+    adminData.read("programs", { order: [{ field: "sort_order", direction: "asc" }] }),
+  ]);
+  const programName = (id) => programs.find((p) => p.id === id)?.name || "-";
+  const scheduleLabel = (s) => `${programName(s.program_id)} - ${s.day_of_week} ${formatTime(s.start_time)} (${s.age_group})`;
+  const studentRows = students.map((s) => `<tr>
+    <td>${esc(s.name)}</td><td>${esc(s.age ?? "-")}</td><td>${esc(s.dob ?? "-")}</td>
+    <td>${button("Edit", `edit-student:${esc(s.id)}`)}</td></tr>`).join("");
+  const studentOptions = students.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+  const scheduleOptions = schedules.map((s) => `<option value="${esc(s.id)}">${esc(scheduleLabel(s))}</option>`).join("");
+
+  const promoteButton = email
+    ? button("Promote to account", "promote-pending", "btn btn-sm btn-secondary")
+    : `<button class="btn btn-sm btn-secondary" disabled title="Add an email before promoting this family to an account.">Promote to account</button>`;
+
+  app.innerHTML = `<div class="admin-crud-header">
+      <h1>${esc(name || "Family")} <span class="status-badge status-pending">No account yet</span></h1>
+      <div class="admin-header-actions">${promoteButton}${button("Edit family", "edit-pending")}${button("← Back to Accounts", "back-to-accounts")}</div></div>
+    <p class="muted">${esc(email || "No email on file")}</p>
+    <p class="muted">Attendance, credits, and 请假 (leave) are recorded standalone until this family has an account.</p>
+    <div id="form-slot"></div>
+    <section><div class="admin-crud-header"><h2>Students</h2>${button("+ Add student", "add-student-form")}</div>
+      ${table(["Name", "Age", "DOB", "Actions"], studentRows)}</section>
+    <section><div class="admin-crud-header"><h2>Enrollments</h2>
+      ${students.length ? button("+ Comp enrollment", "add-enrollment-form") : ""}</div>
+      <p class="muted">Comped enrollments for this family are listed on the Enrollments page until the family has an account.</p></section>`;
+  renderNotification();
+
+  const slot = () => document.querySelector("#form-slot");
+
+  function bindFormEl(onSubmit) {
+    const formEl = document.querySelector("#record-form");
+    const errorEl = formEl.querySelector("#form-error");
+    formEl.querySelector('[data-action="cancel-form"]').addEventListener("click", () => pendingDetail(pendingParentId, email, name));
+    formEl.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const saveButton = formEl.querySelector("[data-save-button]");
+      saveButton.disabled = true; saveButton.textContent = "Saving…"; errorEl.hidden = true;
+      try {
+        await onSubmit(Object.fromEntries(new FormData(e.currentTarget)));
+        await pendingDetail(pendingParentId, email, name);
+      } catch (error) {
+        errorEl.textContent = error.code === "ACCOUNT_EXISTS"
+          ? "An account already exists for this email."
+          : (error.message || "Could not save. Please try again.");
+        errorEl.hidden = false; saveButton.disabled = false; saveButton.textContent = "Save";
+      }
+    });
+  }
+
+  accountViewClick.listen(app, "click", async (event) => {
+    const action = event.target.dataset.action || "";
+    if (action === "back-to-accounts") { await accounts(); return; }
+
+    if (action === "promote-pending") {
+      const promote = event.target;
+      promote.disabled = true;
+      promote.textContent = "Promoting…";
+      try {
+        const result = await adminFn("promote-pending-parent", { id: pendingParentId });
+        notify(`Account created. ${result.students_claimed} student(s) moved across.`);
+        await accountDetail(result.account.user_id, result.account.email, result.account.name, result);
+      } catch (error) {
+        alert(error.message || "Could not promote this family.");
+        promote.disabled = false;
+        promote.textContent = "Promote to account";
+      }
+      return;
+    }
+
+    if (action === "edit-pending") {
+      slot().innerHTML = `<form id="record-form" class="admin-form">
+        <h3>Edit family</h3><p class="auth-error" id="form-error" hidden></p>
+        <label>Parent name<input name="parent_name" required value="${esc(name || "")}"></label>
+        <label>Email<input name="email" type="email" value="${esc(email || "")}"></label>
+        <p class="hint">Adding an email lets you enroll this family's students and promote them to an account.</p>
+        <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
+      bindFormEl(async (data) => {
+        const result = await adminFn("update-pending-parent", {
+          id: pendingParentId,
+          parent_name: data.parent_name,
+          email: data.email || null,
+        });
+        notify("Family updated.");
+        // The header reads from the arguments, so refresh them before the
+        // re-render bindFormEl performs.
+        email = result.pending_parent.email;
+        name = result.pending_parent.parent_name;
+      });
+      return;
+    }
+
+    if (action === "add-student-form" || action.startsWith("edit-student:")) {
+      const editing = action.startsWith("edit-student:") ? students.find((s) => s.id === action.split(":")[1]) : null;
+      slot().innerHTML = `<form id="record-form" class="admin-form">
+        <h3>${editing ? "Edit student" : "Add student"}</h3><p class="auth-error" id="form-error" hidden></p>
+        <label>Name<input name="name" required value="${esc(editing?.name || "")}"></label>
+        <label>Date of birth<input name="dob" type="date" required value="${esc((editing?.dob || "").slice(0, 10))}"></label>
+        <label>Notes<textarea name="notes">${esc(editing?.notes || "")}</textarea></label>
+        <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
+      bindFormEl(async (data) => {
+        if (editing) await adminFn("update-student", { id: editing.id, name: data.name, dob: data.dob, notes: data.notes });
+        else await adminFn("add-student", { pending_parent_id: pendingParentId, name: data.name, dob: data.dob, notes: data.notes });
+        notify(editing ? "Student updated." : "Student added.");
+      });
+      return;
+    }
+
+    if (action === "add-enrollment-form") {
+      slot().innerHTML = `<form id="record-form" class="admin-form">
+        <h3>Comp enrollment</h3><p class="auth-error" id="form-error" hidden></p>
+        <label>Student<select name="student_id" required>${studentOptions}</select></label>
+        <label>Class<select name="schedule_id" required>${scheduleOptions}</select></label>
+        <label>Number of classes (credits)<input name="num_classes_enrolled" type="number" min="1" required value="8"></label>
+        <label>Email<input name="student_email" type="email" required value="${esc(email || "")}"></label>
+        <p class="hint">An enrollment needs an email. Entering one here saves it to the family too.</p>
+        <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Create</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
+      bindFormEl(async (data) => {
+        await adminFn("create-enrollment", {
+          pending_parent_id: pendingParentId, student_id: data.student_id, schedule_id: data.schedule_id,
+          num_classes_enrolled: Number(data.num_classes_enrolled),
+          student_email: data.student_email, parent_name: name,
+        });
+        notify("Comped enrollment created.");
+        if (!email) email = data.student_email;
+      });
+      return;
+    }
+  });
 }
 
 // A family the admin has met but who has no account yet. Only a name is
