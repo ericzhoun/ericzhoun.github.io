@@ -228,9 +228,16 @@ const ADMIN_DATA_RESOURCES = {
     order: ["booked_at"],
   },
   students: {
-    read: ["id", "user_id", "name", "age", "dob", "notes", "created_at", "updated_at"],
-    filters: { user_id: "uuid" },
+    read: ["id", "user_id", "pending_parent_id", "name", "age", "dob", "notes", "created_at", "updated_at"],
+    filters: { user_id: "uuid", pending_parent_id: "uuid" },
     order: ["created_at"],
+  },
+  // Read-only for the same reason as parent_profiles: contact data is written
+  // only through the dedicated actions, never straight from the admin JWT.
+  pending_parents: {
+    read: ["id", "parent_name", "email", "student_phone", "emergency_contact", "allergies", "created_at", "updated_at"],
+    filters: { id: "uuid" },
+    order: ["parent_name", "created_at"],
   },
   // Read-only: the roster resolves each student's parent account for display.
   // Writes stay behind the dedicated account actions so the admin JWT can
@@ -1118,18 +1125,27 @@ async function setCredits(ctx, body) {
 // details and also represents accounts with no activity yet. Enrollment rows
 // remain the fallback for legacy accounts created before profiles existed.
 async function listAccounts(ctx) {
-  const [profileRows, studentRows, enrollmentRows] = await Promise.all([
+  const [profileRows, studentRows, enrollmentRows, pendingRows] = await Promise.all([
     data(ctx, "parent_profiles?select=user_id,email,parent_name"),
-    data(ctx, "students?select=user_id"),
+    data(ctx, "students?select=user_id,pending_parent_id"),
     // Newest rows carry the most recently saved contact information. Keep the
     // ordering explicit because the REST API does not guarantee row order.
     data(ctx, "enrollments?select=user_id,student_email,parent_name,created_at&order=created_at.desc"),
+    data(ctx, "pending_parents?select=id,parent_name,email,student_phone"),
   ]);
 
   const accounts = new Map();
   const entry = (userId) => {
     if (!accounts.has(userId)) {
-      accounts.set(userId, { user_id: userId, email: null, name: null, student_count: 0, enrollment_count: 0 });
+      accounts.set(userId, {
+        kind: "account",
+        user_id: userId,
+        pending_parent_id: null,
+        email: null,
+        name: null,
+        student_count: 0,
+        enrollment_count: 0,
+      });
     }
     return accounts.get(userId);
   };
@@ -1152,7 +1168,25 @@ async function listAccounts(ctx) {
     if (account.name === null) account.name = str(row.parent_name);
   }
 
-  const list = [...accounts.values()].sort((a, b) => (a.name || "￿").localeCompare(b.name || "￿"));
+  // Placeholders have no user_id, so they are appended rather than merged into
+  // the user-keyed map. student_count comes from the pending_parent_id column.
+  const pendingCounts = new Map();
+  for (const row of rows(studentRows)) {
+    if (!row.pending_parent_id) continue;
+    pendingCounts.set(row.pending_parent_id, (pendingCounts.get(row.pending_parent_id) || 0) + 1);
+  }
+  const pendingList = rows(pendingRows).filter((row) => row.id).map((row) => ({
+    kind: "pending",
+    user_id: null,
+    pending_parent_id: row.id,
+    email: str(row.email),
+    name: str(row.parent_name),
+    student_count: pendingCounts.get(row.id) || 0,
+    enrollment_count: 0,
+  }));
+
+  const list = [...accounts.values(), ...pendingList]
+    .sort((a, b) => (a.name || "￿").localeCompare(b.name || "￿"));
   return json({ accounts: list }, 200);
 }
 

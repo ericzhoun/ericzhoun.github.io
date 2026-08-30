@@ -785,19 +785,23 @@ test("list-accounts aggregates parents across students and enrollments", async (
 
   // p1 has both students and enrollments
   assert.deepEqual(byId.p1, {
-    user_id: "p1", email: "profile@e.com", name: "Profile Alice", student_count: 2, enrollment_count: 2,
+    kind: "account", user_id: "p1", pending_parent_id: null,
+    email: "profile@e.com", name: "Profile Alice", student_count: 2, enrollment_count: 2,
   });
   // p2 has only students - still listed, with no email or name to show
   assert.deepEqual(byId.p2, {
-    user_id: "p2", email: null, name: null, student_count: 1, enrollment_count: 0,
+    kind: "account", user_id: "p2", pending_parent_id: null,
+    email: null, name: null, student_count: 1, enrollment_count: 0,
   });
   // p3 has only enrollments
   assert.deepEqual(byId.p3, {
-    user_id: "p3", email: "c@e.com", name: "Cara", student_count: 0, enrollment_count: 1,
+    kind: "account", user_id: "p3", pending_parent_id: null,
+    email: "c@e.com", name: "Cara", student_count: 0, enrollment_count: 1,
   });
   // p4 has an account profile but has not added students or enrolled yet.
   assert.deepEqual(byId.p4, {
-    user_id: "p4", email: "fresh@e.com", name: "Fresh Parent", student_count: 0, enrollment_count: 0,
+    kind: "account", user_id: "p4", pending_parent_id: null,
+    email: "fresh@e.com", name: "Fresh Parent", student_count: 0, enrollment_count: 0,
   });
 });
 
@@ -1363,4 +1367,39 @@ test("promote-pending-parent keeps the placeholder when account creation fails",
 
   assert.equal(res.status, 409);
   assert.equal(dataCalls(res).some((call) => call.method === "DELETE"), false);
+});
+
+test("list-accounts returns pending parents alongside real accounts", async () => {
+  const res = await callHandler(request({ action: "list-accounts" }), {
+    respond: (url) => {
+      if (url.includes("parent_profiles")) return { body: [{ user_id: "user-1", email: "real@example.com", parent_name: "Real Parent" }] };
+      if (url.includes("pending_parents")) return { body: [{ id: "pending-1", parent_name: "Pending Parent", email: "pending@example.com" }] };
+      if (url.includes("students")) return { body: [{ user_id: "user-1", pending_parent_id: null }, { user_id: null, pending_parent_id: "pending-1" }, { user_id: null, pending_parent_id: "pending-1" }] };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  const { accounts } = await res.json();
+  const real = accounts.find((a) => a.user_id === "user-1");
+  const pending = accounts.find((a) => a.pending_parent_id === "pending-1");
+
+  assert.equal(real.kind, "account");
+  assert.equal(real.student_count, 1);
+  assert.equal(pending.kind, "pending");
+  assert.equal(pending.student_count, 2);
+  assert.equal(pending.user_id, null);
+});
+
+test("list-accounts still works when there are no pending parents", async () => {
+  const res = await callHandler(request({ action: "list-accounts" }), {
+    respond: (url) => url.includes("parent_profiles")
+      ? { body: [{ user_id: "user-1", email: "real@example.com", parent_name: "Real Parent" }] }
+      : { body: [] },
+  });
+
+  assert.equal(res.status, 200);
+  const { accounts } = await res.json();
+  assert.equal(accounts.length, 1);
+  assert.equal(accounts[0].kind, "account");
 });
