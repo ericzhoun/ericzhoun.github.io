@@ -34,7 +34,50 @@ export async function handler(req, ctx) {
     [me.id, me.email]
   );
 
-  return json({ claimed: res.rows.map((r) => r.id) }, 200);
+  // A family the admin recorded before this account existed. Matching on the
+  // verified email is the same proof the enrollment claim above relies on.
+  const claimedStudents = await claimPendingParent(ctx, me);
+
+  return json({ claimed: res.rows.map((r) => r.id), claimed_students: claimedStudents }, 200);
+}
+
+// Mirrors mergePendingParent in admin-manage.js: fill the profile without
+// clobbering anything the parent already set, repoint the students, drop the
+// placeholder. Written against ctx.db because this function runs as the end
+// user, not the service key.
+async function claimPendingParent(ctx, me) {
+  const found = await ctx.db.query(
+    `SELECT id, parent_name, email, student_phone, emergency_contact, allergies
+       FROM pending_parents WHERE lower(email) = lower($1) LIMIT 1`,
+    [me.email]
+  );
+  const pending = found.rows[0];
+  if (!pending) return [];
+
+  // COALESCE keeps a value the parent has already saved; the placeholder only
+  // fills blanks.
+  await ctx.db.query(
+    `INSERT INTO parent_profiles (user_id, email, parent_name, student_phone, emergency_contact, allergies)
+     VALUES ($1, $2, COALESCE(NULLIF($3, ''), $2), $4, $5, $6)
+     ON CONFLICT (user_id) DO UPDATE SET
+       parent_name       = COALESCE(NULLIF(parent_profiles.parent_name, ''), EXCLUDED.parent_name),
+       student_phone     = COALESCE(NULLIF(parent_profiles.student_phone, ''), EXCLUDED.student_phone),
+       emergency_contact = COALESCE(NULLIF(parent_profiles.emergency_contact, ''), EXCLUDED.emergency_contact),
+       allergies         = COALESCE(NULLIF(parent_profiles.allergies, ''), EXCLUDED.allergies),
+       updated_at        = now()`,
+    [me.id, me.email, pending.parent_name, pending.student_phone, pending.emergency_contact, pending.allergies]
+  );
+
+  const repointed = await ctx.db.query(
+    `UPDATE students SET user_id = $1, pending_parent_id = NULL
+      WHERE pending_parent_id = $2
+      RETURNING id`,
+    [me.id, pending.id]
+  );
+
+  await ctx.db.query(`DELETE FROM pending_parents WHERE id = $1`, [pending.id]);
+
+  return repointed.rows.map((r) => r.id);
 }
 
 function json(obj, status) {
