@@ -1149,3 +1149,56 @@ test("update-pending-parent requires an id", async () => {
   const res = await callHandler(request({ action: "update-pending-parent", parent_name: "No Id" }));
   assert.equal(res.status, 400);
 });
+
+test("update-account patches the parent profile", async () => {
+  const res = await callHandler(request({
+    action: "update-account",
+    user_id: "user-1",
+    parent_name: "Corrected Name",
+    student_phone: "555-0123",
+  }), {
+    respond: (url) => url.includes("parent_profiles")
+      ? { body: [{ user_id: "user-1", parent_name: "Corrected Name", student_phone: "555-0123" }] }
+      : { body: [] },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).account.parent_name, "Corrected Name");
+  const patch = dataCalls(res).find((call) => call.method === "PATCH");
+  assert.ok(patch.url.includes("parent_profiles/user-1"));
+  assert.equal(patch.body.parent_name, "Corrected Name");
+});
+
+// resend-invitation deliberately trusts the stored profile so an admin browser
+// cannot redirect account messages. Letting the email be patched here would
+// reopen exactly that hole and desync the profile from the auth identity.
+test("update-account never writes the email even when one is supplied", async () => {
+  const res = await callHandler(request({
+    action: "update-account",
+    user_id: "user-1",
+    parent_name: "Corrected Name",
+    email: "attacker@example.com",
+  }), {
+    respond: (url) => url.includes("parent_profiles")
+      ? { body: [{ user_id: "user-1", parent_name: "Corrected Name" }] }
+      : { body: [] },
+  });
+
+  assert.equal(res.status, 400);
+  assert.equal(dataCalls(res).some((call) => call.method === "PATCH"), false);
+});
+
+test("update-account requires a user id", async () => {
+  const res = await callHandler(request({ action: "update-account", parent_name: "No Id" }));
+  assert.equal(res.status, 400);
+});
+
+test("update-account reports a profile that does not exist", async () => {
+  const res = await callHandler(request({
+    action: "update-account",
+    user_id: "missing",
+    parent_name: "Ghost",
+  }), { respond: () => ({ body: [] }) });
+
+  assert.equal(res.status, 404);
+});

@@ -46,6 +46,8 @@ export async function handler(req, ctx) {
         return await createPendingParent(ctx, body);
       case "update-pending-parent":
         return await updatePendingParent(ctx, body);
+      case "update-account":
+        return await updateAccount(ctx, body);
       case "add-student":
         return await addStudent(ctx, body);
       case "update-student":
@@ -703,6 +705,28 @@ async function updatePendingParent(ctx, body) {
   const pendingParent = rows(updated)[0];
   if (!pendingParent) return json({ error: "Pending parent not found" }, 404);
   return json({ pending_parent: pendingParent }, 200);
+}
+
+// Edits a real account's profile. Email is deliberately absent from the
+// allowed keys: resend-invitation treats the stored profile as authoritative
+// so an admin browser cannot redirect account messages, and patching the
+// profile email alone would desync it from the auth identity. A wrong email
+// is fixed by creating a new account, not by editing this one.
+async function updateAccount(ctx, body) {
+  assertOnlyKeys(body, ["action", "user_id", ...PENDING_FIELDS]);
+  const userId = str(body.user_id);
+  if (!userId) return json({ error: "Parent account id is required" }, 400);
+
+  const fields = {};
+  for (const key of PENDING_FIELDS) {
+    if (body[key] !== undefined) fields[key] = str(body[key]);
+  }
+  fields.updated_at = new Date().toISOString();
+
+  const updated = await data(ctx, `parent_profiles/${encodeURIComponent(userId)}`, { method: "PATCH", body: fields });
+  const account = rows(updated)[0];
+  if (!account) return json({ error: "Parent profile not found" }, 404);
+  return json({ account }, 200);
 }
 
 export async function sendWelcomeEmail(ctx, { email, parentName }) {
