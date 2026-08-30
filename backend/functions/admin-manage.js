@@ -886,14 +886,22 @@ function randomPassword() {
 // attached.
 async function addStudent(ctx, body) {
   const userId = str(body.user_id);
+  const pendingParentId = str(body.pending_parent_id);
   const name = str(body.name);
   const dob = str(body.dob);
+  // The owner is user_id xor pending_parent_id. Both set would make the
+  // student visible to a real parent while still claimable by a placeholder
+  // merge, so it is rejected rather than resolved by precedence.
+  if (userId && pendingParentId) {
+    return json({ error: "A student belongs to either an account or a pending parent, not both" }, 400);
+  }
   if (!name) return json({ error: "Student name is required" }, 400);
   const age = calculateStudentAge(dob);
   if (age == null) return json({ error: "A valid date of birth is required" }, 400);
 
   const fields = { name, age: String(age), dob, notes: str(body.notes) };
   if (userId) fields.user_id = userId;
+  if (pendingParentId) fields.pending_parent_id = pendingParentId;
 
   const created = await data(ctx, "students", { method: "POST", body: fields });
   return json({ student: rows(created)[0] || null }, 200);
@@ -927,9 +935,13 @@ async function updateStudent(ctx, body) {
 // attendance sheet, and the parent's account page.
 async function createEnrollment(ctx, body) {
   const userId = str(body.user_id);
+  const pendingParentId = str(body.pending_parent_id);
   const studentId = str(body.student_id);
   const scheduleId = str(body.schedule_id);
   const numClasses = parseInt(body.num_classes_enrolled, 10);
+  if (userId && pendingParentId) {
+    return json({ error: "An enrollment belongs to either an account or a pending parent, not both" }, 400);
+  }
   if (!studentId || !scheduleId) {
     return json({ error: "Student and schedule are required" }, 400);
   }
@@ -943,6 +955,23 @@ async function createEnrollment(ctx, body) {
   ));
   if (schedules.length === 0) return json({ error: "Class schedule not found" }, 404);
   const priceCents = schedules[0].price_cents;
+
+  // enrollments.student_email is NOT NULL, so a placeholder with no email on
+  // file cannot back an enrollment. An email supplied here is written back to
+  // the placeholder, so the family only has to be asked once.
+  let pendingParent = null;
+  if (pendingParentId) {
+    pendingParent = rows(await data(
+      ctx,
+      `pending_parents?id=eq.${encodeURIComponent(pendingParentId)}&select=id,parent_name,email,student_phone`,
+    ))[0] || null;
+    if (!pendingParent) return json({ error: "Pending parent not found" }, 404);
+  }
+  const suppliedEmail = normalizeEmail(body.student_email);
+  const enrollmentEmail = suppliedEmail || (pendingParent && str(pendingParent.email)) || str(body.student_email);
+  if (pendingParentId && !enrollmentEmail) {
+    return json({ error: "An email is required to enroll a pending parent's student" }, 400);
+  }
 
   const studentQuery = userId
     ? `students?id=eq.${encodeURIComponent(studentId)}&user_id=eq.${encodeURIComponent(userId)}&select=name`
@@ -958,9 +987,9 @@ async function createEnrollment(ctx, body) {
     schedule_id: scheduleId,
     student_id: studentId,
     student_name: students[0].name,
-    student_email: str(body.student_email),
-    student_phone: str(body.student_phone),
-    parent_name: str(body.parent_name),
+    student_email: enrollmentEmail,
+    student_phone: str(body.student_phone) || (pendingParent && str(pendingParent.student_phone)) || null,
+    parent_name: str(body.parent_name) || (pendingParent && str(pendingParent.parent_name)) || null,
     status: "confirmed",
     num_classes_enrolled: numClasses,
     price_per_class_cents: priceCents,
@@ -970,6 +999,14 @@ async function createEnrollment(ctx, body) {
   if (userId) enrollmentFields.user_id = userId;
 
   const created = await data(ctx, "enrollments", { method: "POST", body: enrollmentFields });
+
+  if (pendingParent && suppliedEmail && !pendingParent.email) {
+    await data(ctx, `pending_parents/${encodeURIComponent(pendingParentId)}`, {
+      method: "PATCH",
+      body: { email: suppliedEmail, updated_at: new Date().toISOString() },
+    });
+  }
+
   return json({ enrollment: { id: (rows(created)[0] || {}).id || null } }, 200);
 }
 

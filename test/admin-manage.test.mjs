@@ -1202,3 +1202,103 @@ test("update-account reports a profile that does not exist", async () => {
 
   assert.equal(res.status, 404);
 });
+
+test("add-student attaches a student to a pending parent", async () => {
+  const res = await callHandler(request({
+    action: "add-student",
+    pending_parent_id: "pending-1",
+    name: "Ada",
+    dob: "2016-05-04",
+  }), {
+    respond: (url) => url.includes("students")
+      ? { body: [{ id: "student-1", pending_parent_id: "pending-1", name: "Ada" }] }
+      : { body: [] },
+  });
+
+  assert.equal(res.status, 200);
+  const insert = dataCalls(res).find((call) => call.method === "POST" && call.url.includes("students"));
+  assert.equal(insert.body.pending_parent_id, "pending-1");
+  assert.equal(insert.body.user_id, undefined);
+});
+
+test("add-student refuses both a user id and a pending parent id", async () => {
+  const res = await callHandler(request({
+    action: "add-student",
+    user_id: "user-1",
+    pending_parent_id: "pending-1",
+    name: "Ada",
+    dob: "2016-05-04",
+  }));
+
+  assert.equal(res.status, 400);
+});
+
+test("create-enrollment uses the pending parent's email for the enrollment row", async () => {
+  const res = await callHandler(request({
+    action: "create-enrollment",
+    pending_parent_id: "pending-1",
+    student_id: "student-1",
+    schedule_id: "sched-1",
+    num_classes_enrolled: 4,
+  }), {
+    respond: (url) => {
+      if (url.includes("class_schedules")) return { body: [{ price_cents: 3000 }] };
+      if (url.includes("pending_parents")) return { body: [{ id: "pending-1", parent_name: "Wei Chen", email: "wei@example.com", student_phone: "555-0100" }] };
+      if (url.includes("students")) return { body: [{ name: "Ada" }] };
+      if (url.includes("enrollments")) return { body: [{ id: "enrollment-1" }] };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  const insert = dataCalls(res).find((call) => call.method === "POST" && call.url.includes("enrollments"));
+  assert.equal(insert.body.student_email, "wei@example.com");
+  assert.equal(insert.body.parent_name, "Wei Chen");
+  assert.equal(insert.body.user_id, undefined);
+});
+
+// enrollments.student_email is NOT NULL, so a name-only placeholder cannot
+// back an enrollment until an email exists somewhere.
+test("create-enrollment refuses a pending parent with no email available", async () => {
+  const res = await callHandler(request({
+    action: "create-enrollment",
+    pending_parent_id: "pending-2",
+    student_id: "student-2",
+    schedule_id: "sched-1",
+    num_classes_enrolled: 4,
+  }), {
+    respond: (url) => {
+      if (url.includes("class_schedules")) return { body: [{ price_cents: 3000 }] };
+      if (url.includes("pending_parents")) return { body: [{ id: "pending-2", parent_name: "Name Only", email: null }] };
+      if (url.includes("students")) return { body: [{ name: "Bo" }] };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /email/i);
+  assert.equal(dataCalls(res).some((call) => call.method === "POST" && call.url.includes("enrollments")), false);
+});
+
+test("create-enrollment writes a supplied email back to the pending parent", async () => {
+  const res = await callHandler(request({
+    action: "create-enrollment",
+    pending_parent_id: "pending-2",
+    student_id: "student-2",
+    schedule_id: "sched-1",
+    num_classes_enrolled: 4,
+    student_email: "late@example.com",
+  }), {
+    respond: (url) => {
+      if (url.includes("class_schedules")) return { body: [{ price_cents: 3000 }] };
+      if (url.includes("pending_parents")) return { body: [{ id: "pending-2", parent_name: "Name Only", email: null }] };
+      if (url.includes("students")) return { body: [{ name: "Bo" }] };
+      if (url.includes("enrollments")) return { body: [{ id: "enrollment-2" }] };
+      return { body: [] };
+    },
+  });
+
+  assert.equal(res.status, 200);
+  const patch = dataCalls(res).find((call) => call.method === "PATCH" && call.url.includes("pending_parents"));
+  assert.equal(patch.body.email, "late@example.com");
+});
