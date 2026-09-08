@@ -15,6 +15,7 @@ const nav = [
   ["schedules", "Schedules"], ["sessions", "Sessions"], ["enrollments", "Enrollments"],
   ["payments", "Payments"],
   ["students", "Students"], ["accounts", "Accounts"],
+  ["broadcast", "Broadcast"],
 ];
 const app = document.querySelector("#admin-app");
 const accountViewClick = createLatestEventListener();
@@ -1216,5 +1217,130 @@ async function accountDetail(userId, email, name, accountState = null) {
   });
 }
 
-async function render() { accountViewClick.clear(); if (!guard()) return; renderNav(); try { const id = query(); if (id === "dashboard") await dashboard(); else if (configs[id]) await crud(id); else if (id === "enrollments") await enrollments(); else if (id === "payments") await payments(); else if (id === "students") await students(); else if (id === "sessions") await sessions(); else if (id === "accounts") await accounts(); else app.innerHTML = `<h1>${id[0].toUpperCase() + id.slice(1)}</h1><p class="muted">Section unavailable.</p>`; renderNotification(); } catch (err) { app.innerHTML = `<p class="auth-error">${esc(err.message)}</p>`; } }
+// Family broadcast: one plain-text email per family through the studio Gmail
+// via admin-manage "send-broadcast". Recipients are resolved server-side at
+// send time; the counts shown here are client-side estimates for the preview.
+function broadcastAudienceCounts(profiles, pending, enrollments, schedules) {
+  const distinct = (entries) => {
+    const seen = new Set();
+    entries.forEach((email) => {
+      const normalized = String(email || "").trim().toLowerCase();
+      if (normalized) seen.add(normalized);
+    });
+    return seen.size;
+  };
+  const counts = { all: distinct([...profiles.map((profile) => profile.email), ...pending.map((family) => family.email)]) };
+  schedules.forEach((schedule) => {
+    if (counts[schedule.program_id] !== undefined) return;
+    const scheduleIds = new Set(schedules.filter((s) => s.program_id === schedule.program_id).map((s) => s.id));
+    const profileEmails = new Map(profiles.filter((profile) => profile.user_id).map((profile) => [profile.user_id, profile.email]));
+    counts[schedule.program_id] = distinct(
+      enrollments
+        .filter((enrollment) => enrollment.status !== "cancelled" && scheduleIds.has(enrollment.schedule_id))
+        .map((enrollment) => (enrollment.user_id && profileEmails.get(enrollment.user_id)) || enrollment.student_email),
+    );
+  });
+  return counts;
+}
+
+async function broadcast() {
+  const [programs, profiles, pending, enrollments, schedules] = await Promise.all([
+    adminData.read("programs", { select: ["id", "name"] }),
+    adminData.read("parent_profiles", { select: ["user_id", "email", "parent_name"] }),
+    adminData.read("pending_parents", { select: ["email", "parent_name"] }),
+    adminData.read("enrollments", { select: ["user_id", "student_email", "status", "schedule_id"] }),
+    adminData.read("class_schedules", { select: ["id", "program_id"] }),
+  ]);
+  const counts = broadcastAudienceCounts(profiles, pending, enrollments, schedules);
+  const programById = new Map(programs.map((program) => [program.id, program]));
+  const audienceOptions = [
+    `<option value="all">All families (about ${counts.all})</option>`,
+    ...programs.map((program) => `<option value="program:${esc(program.id)}">${esc(program.name)} (about ${counts[program.id] ?? 0})</option>`),
+  ].join("");
+  app.innerHTML = `<div class="admin-crud-header"><h1>Broadcast</h1></div>
+    <p class="muted">One plain-text email per family, sent from the studio Gmail. Recipients are resolved on the server when you send - the counts here are estimates for the preview only.</p>
+    <div class="admin-form">
+      <h3>New broadcast</h3><p class="auth-error" id="form-error" hidden></p>
+      <label>Audience<select id="broadcast-audience">${audienceOptions}</select></label>
+      <label>Subject<input id="broadcast-subject" maxlength="200" placeholder="What is this about?"></label>
+      <label>Message<textarea id="broadcast-message" rows="12" maxlength="20000" placeholder="Write your announcement. Plain text only."></textarea></label>
+      <p class="hint">Families receive individual emails and cannot see each other's addresses.</p>
+      <div>${button("Send test to my account", "broadcast-test")} ${button("Review and send", "broadcast-review")}</div>
+    </div>
+    <div id="broadcast-review-slot"></div>`;
+
+  const readDraft = () => ({
+    subject: (document.querySelector("#broadcast-subject")?.value || "").trim(),
+    message: (document.querySelector("#broadcast-message")?.value || "").trim(),
+    audience: document.querySelector("#broadcast-audience")?.value || "all",
+  });
+  const validateDraft = (draft) => {
+    if (!draft.subject) return "A subject is required.";
+    if (draft.subject.length > 200) return "Keep the subject under 200 characters.";
+    if (!draft.message) return "A message is required.";
+    if (draft.message.length > 20000) return "Keep the message under 20000 characters.";
+    return null;
+  };
+  const parseAudience = (value) => {
+    if (value === "all") return { audience: "all" };
+    if (value.startsWith("program:")) return { audience: "program", program_id: value.slice("program:".length) };
+    return null;
+  };
+  const describeResult = (payload) => {
+    const failures = Array.isArray(payload.failures) ? payload.failures : [];
+    return failures.length
+      ? `Sent to ${payload.sent} of ${payload.total}. Failed: ${failures.map((failure) => esc(failure.email)).join(", ")}`
+      : `Sent to ${payload.sent} of ${payload.total}.`;
+  };
+  const showFormError = (problem) => {
+    const errorSlot = document.querySelector("#form-error");
+    if (!errorSlot) return;
+    errorSlot.textContent = problem || "";
+    errorSlot.hidden = !problem;
+  };
+
+  accountViewClick.listen(app, "click", async (event) => {
+    const action = event.target.dataset.action || "";
+    if (!action.startsWith("broadcast-")) return;
+    const draft = readDraft();
+    const problem = validateDraft(draft);
+    if (problem) { showFormError(problem); return; }
+    showFormError(null);
+
+    if (action === "broadcast-test") {
+      const result = await adminFn("send-broadcast", { ...draft, audience: "test" });
+      notify(`Test copy ${result.sent === 1 ? "sent" : "could not be sent"} to your own account. ${describeResult(result)}`);
+      render();
+      return;
+    }
+    if (action === "broadcast-back") {
+      document.querySelector("#broadcast-review-slot").innerHTML = "";
+      return;
+    }
+    if (action === "broadcast-confirm") {
+      const parsed = parseAudience(draft.audience);
+      if (!parsed) { notify("Pick an audience first."); render(); return; }
+      const result = await adminFn("send-broadcast", { ...draft, ...parsed });
+      notify(describeResult(result));
+      render();
+      return;
+    }
+    if (action === "broadcast-review") {
+      const parsed = parseAudience(draft.audience);
+      if (!parsed) { showFormError("Pick an audience first."); return; }
+      const label = parsed.audience === "all"
+        ? `All families (about ${counts.all})`
+        : `${esc((programById.get(parsed.program_id) || {}).name || "Program")} (about ${counts[parsed.program_id] ?? 0})`;
+      document.querySelector("#broadcast-review-slot").innerHTML = `<div class="admin-form">
+        <h3>Review before sending</h3>
+        <p><b>To:</b> ${label}</p>
+        <p><b>Subject:</b> ${esc(draft.subject)}</p>
+        <pre style="white-space:pre-wrap;font-family:inherit;margin:8px 0 16px;border:1px solid var(--color-border);padding:14px;">${esc(draft.message)}</pre>
+        <p>${button("Confirm send", "broadcast-confirm")} ${button("Back to editing", "broadcast-back")}</p>
+      </div>`;
+    }
+  });
+}
+
+async function render() { accountViewClick.clear(); if (!guard()) return; renderNav(); try { const id = query(); if (id === "dashboard") await dashboard(); else if (configs[id]) await crud(id); else if (id === "enrollments") await enrollments(); else if (id === "payments") await payments(); else if (id === "students") await students(); else if (id === "sessions") await sessions(); else if (id === "accounts") await accounts(); else if (id === "broadcast") await broadcast(); else app.innerHTML = `<h1>${id[0].toUpperCase() + id.slice(1)}</h1><p class="muted">Section unavailable.</p>`; renderNotification(); } catch (err) { app.innerHTML = `<p class="auth-error">${esc(err.message)}</p>`; } }
 window.addEventListener("hashchange", render); document.querySelector("#admin-logout").addEventListener("click", async () => { await logout(); location.href = "index.html"; }); render();

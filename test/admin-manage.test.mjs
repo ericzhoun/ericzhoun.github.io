@@ -1456,3 +1456,100 @@ test("list-accounts still works when there are no pending parents", async () => 
   assert.equal(accounts.length, 1);
   assert.equal(accounts[0].kind, "account");
 });
+
+// ---- family broadcasts ----
+
+test("send-broadcast to all families dedupes addresses and sends one Gmail per family", async () => {
+  const res = await callHandler(request({
+    action: "send-broadcast", subject: "Studio news", message: "Hello families!",
+    audience: "all",
+  }), {
+    respond: (url) => {
+      if (url.includes("parent_profiles?")) return { body: [{ email: "A@x.com", parent_name: "A" }, { email: "b@x.com", parent_name: "B" }] };
+      if (url.includes("pending_parents?")) return { body: [{ email: "B@X.COM", parent_name: "B" }, { email: null, parent_name: "NoEmail" }, { email: "d@x.com", parent_name: "D" }] };
+      if (url.includes("/integrations/execute")) return { body: { successful: true } };
+      return { body: [] };
+    },
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { total: 3, sent: 3, failed: 0, failures: [] });
+  const sends = res.calls.filter((call) => call.url.endsWith("/integrations/execute"));
+  assert.equal(sends.length, 3);
+  assert.deepEqual(sends.map((call) => call.body.params.to), ["a@x.com", "b@x.com", "d@x.com"]);
+  sends.forEach((call) => {
+    assert.equal(call.body.toolName, "GMAIL_SEND_EMAIL");
+    assert.equal(call.body.userId, "sender-user-1");
+    assert.equal(call.body.params.subject, "Studio news");
+    assert.equal(call.body.params.body, "Hello families!");
+  });
+});
+
+test("send-broadcast program audience resolves families and skips cancelled and other programs", async () => {
+  const PROGRAM_UUID = "1f0a9c1e-1111-4111-8111-111111111111";
+  const res = await callHandler(request({
+    action: "send-broadcast", subject: "Camp update", message: "Hi!",
+    audience: "program", program_id: PROGRAM_UUID,
+  }), {
+    respond: (url) => {
+      if (url.includes("class_schedules?")) return { body: [{ id: "sched-1" }, { id: "sched-2" }] };
+      if (url.includes("enrollments?")) return { body: [
+        { user_id: "u1", student_email: "ignored1@x.com", parent_name: "P1", status: "confirmed", schedule_id: "sched-1" },
+        { user_id: null, student_email: "guest@x.com", parent_name: "Guest", status: "confirmed", schedule_id: "sched-2" },
+        { user_id: "u2", student_email: "ignored2@x.com", parent_name: "P2", status: "cancelled", schedule_id: "sched-1" },
+        { user_id: "u3", student_email: "ignored3@x.com", parent_name: "P3", status: "confirmed", schedule_id: "sched-9" },
+      ] };
+      if (url.includes("parent_profiles?")) return { body: [
+        { user_id: "u1", email: "u1@x.com", parent_name: "P1" },
+        { user_id: "u2", email: "u2@x.com", parent_name: "P2" },
+      ] };
+      if (url.includes("/integrations/execute")) return { body: { successful: true } };
+      return { body: [] };
+    },
+  });
+  assert.equal(res.status, 200);
+  const result = await res.json();
+  assert.equal(result.total, 2);
+  assert.equal(result.sent, 2);
+  const sends = res.calls.filter((call) => call.url.endsWith("/integrations/execute"));
+  assert.deepEqual(sends.map((call) => call.body.params.to), ["u1@x.com", "guest@x.com"]);
+});
+
+test("send-broadcast test audience sends only to the admin caller", async () => {
+  const res = await callHandler(request({ action: "send-broadcast", subject: "T", message: "M", audience: "test" }), {
+    respond: (url) => (url.includes("/integrations/execute") ? { body: { successful: true } } : { body: [] }),
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { total: 1, sent: 1, failed: 0, failures: [] });
+  const sends = res.calls.filter((call) => call.url.endsWith("/integrations/execute"));
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0].body.params.to, ADMIN_EMAIL);
+});
+
+test("send-broadcast reports per-recipient failures without aborting the rest", async () => {
+  const res = await callHandler(request({ action: "send-broadcast", subject: "S", message: "M", audience: "all" }), {
+    respond: (url, call) => {
+      if (url.includes("parent_profiles?")) return { body: [{ email: "ok@x.com" }, { email: "bad@x.com" }] };
+      if (url.includes("pending_parents?")) return { body: [] };
+      if (url.includes("/integrations/execute")) {
+        return call.body.params.to === "ok@x.com" ? { body: { successful: true } } : { body: { successful: false } };
+      }
+      return { body: [] };
+    },
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { total: 2, sent: 1, failed: 1, failures: [{ email: "bad@x.com" }] });
+});
+
+test("send-broadcast validates subject, message, audience, and program id", async () => {
+  const badRequests = [
+    { action: "send-broadcast", subject: "", message: "M", audience: "all" },
+    { action: "send-broadcast", subject: "S", message: "", audience: "all" },
+    { action: "send-broadcast", subject: "S", message: "M", audience: "everyone" },
+    { action: "send-broadcast", subject: "S", message: "M", audience: "program", program_id: "not-a-uuid" },
+    { action: "send-broadcast", subject: "S", message: "M", audience: "all", extra: "x" },
+  ];
+  for (const bad of badRequests) {
+    const res = await callHandler(request(bad), { respond: () => ({ body: [] }) });
+    assert.equal(res.status, 400, JSON.stringify(bad));
+  }
+});

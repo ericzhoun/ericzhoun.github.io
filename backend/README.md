@@ -99,6 +99,19 @@ the service bypass. Note that `schema/apply` creates tables with RLS **off** -
 call `POST /v1/{app_id}/rls/enable` after adding any table, then confirm an
 unauthenticated `GET /v1/{app_id}/{table}` returns `[]`.
 
+### Family broadcasts
+
+`send-broadcast` sends one plain-text email per family through the same
+`GMAIL_SEND_EMAIL` toolkit the invitations use. Recipients are always
+resolved server-side from the studio's own records - the admin browser sends
+only `{subject, message, audience}`, never a recipient list. Audiences:
+`test` (the admin caller's own address), `all` (every parent profile and
+pending family with an email, deduplicated), `program:<id>` (families with a
+non-cancelled enrollment in that program, falling back to the enrollment's
+`student_email` when no parent account exists). Broadcasts are capped at 500
+recipients; individual failures are reported per address and never abort the
+remaining deliveries.
+
 ## Checkout flows
 
 - Logged-in: `enroll-guard` (auth required) creates a pending enrollment for

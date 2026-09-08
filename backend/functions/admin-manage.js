@@ -62,6 +62,8 @@ export async function handler(req, ctx) {
         return await listAccounts(ctx);
       case "resend-invitation":
         return await resendInvitation(ctx, body);
+      case "send-broadcast":
+        return await sendBroadcast(ctx, body, adminEmail);
       case "recover-account":
         return await recoverAccount(ctx, body);
       case "lookup-account-recovery":
@@ -884,6 +886,101 @@ async function deliverOnboarding(ctx, email, parentName) {
     code_sent: magicLink.status === "fulfilled" && magicLink.value.ok,
     welcome_sent: welcome.status === "fulfilled" && welcome.value === true,
   };
+}
+
+// Family broadcast: sends one plain-text email per family through the same
+// Gmail toolkit the invitations use (GMAIL_SEND_EMAIL). Recipients are always
+// resolved server-side from the studio's own records - the admin browser
+// sends only subject/message/audience, never a recipient list, so a hacked
+// admin tab cannot redirect a broadcast to arbitrary addresses.
+//   - "test"    -> the admin caller's own account email (delivery check)
+//   - "all"     -> every parent profile plus pending family with an email
+//   - "program" -> families with a non-cancelled enrollment in one program
+const BROADCAST_MAX_RECIPIENTS = 500;
+
+function normalizeRecipientList(entries) {
+  const seen = new Set();
+  const recipients = [];
+  for (const entry of entries) {
+    const email = normalizeEmail(entry.email);
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    recipients.push({ email, name: str(entry.name) });
+  }
+  return recipients;
+}
+
+async function broadcastAudience(ctx, audience, programId) {
+  if (audience === "all") {
+    const [profiles, pending] = await Promise.all([
+      data(ctx, "parent_profiles?select=email,parent_name"),
+      data(ctx, "pending_parents?select=email,parent_name"),
+    ]);
+    return normalizeRecipientList([
+      ...rows(profiles).map((profile) => ({ email: profile.email, name: profile.parent_name })),
+      ...rows(pending).map((family) => ({ email: family.email, name: family.parent_name })),
+    ]);
+  }
+  if (!programId) throw requestError("A program is required for the program audience");
+  const programUuid = validateUuid(programId, "Program id");
+  const [schedules, enrollments, profiles] = await Promise.all([
+    data(ctx, `class_schedules?program_id=eq.${programUuid}&select=id`),
+    data(ctx, "enrollments?select=user_id,student_email,parent_name,status,schedule_id"),
+    data(ctx, "parent_profiles?select=user_id,email,parent_name"),
+  ]);
+  const scheduleIds = new Set(rows(schedules).map((schedule) => schedule.id));
+  const profileByUser = new Map(
+    rows(profiles).filter((profile) => profile.user_id).map((profile) => [profile.user_id, profile]),
+  );
+  const entries = rows(enrollments)
+    .filter((enrollment) => enrollment.status !== "cancelled" && scheduleIds.has(enrollment.schedule_id))
+    .map((enrollment) => (enrollment.user_id && profileByUser.get(enrollment.user_id))
+      || { email: enrollment.student_email, name: enrollment.parent_name });
+  return normalizeRecipientList(entries);
+}
+
+async function sendBroadcast(ctx, body, adminEmail) {
+  assertOnlyKeys(body, ["action", "subject", "message", "audience", "program_id"]);
+  const subject = str(body.subject) || "";
+  const message = (str(body.message) || "").replace(/\r\n/g, "\n");
+  if (!subject || subject.length > 200) throw requestError("Subject is required (200 characters max)");
+  if (!message || message.length > 20000) throw requestError("Message is required (20000 characters max)");
+  const audience = str(body.audience);
+  if (!"all program test".split(" ").includes(audience)) throw requestError("Audience is invalid");
+
+  let recipients;
+  if (audience === "test") {
+    if (!adminEmail) throw requestError("The caller's email is unavailable");
+    recipients = [{ email: adminEmail, name: "" }];
+  } else {
+    recipients = await broadcastAudience(ctx, audience, str(body.program_id));
+  }
+  if (recipients.length === 0) return json({ total: 0, sent: 0, failed: 0, failures: [] }, 200);
+  if (recipients.length > BROADCAST_MAX_RECIPIENTS) {
+    throw requestError(`Broadcasts are capped at ${BROADCAST_MAX_RECIPIENTS} recipients`);
+  }
+
+  const failures = [];
+  let sent = 0;
+  for (const recipient of recipients) {
+    const res = await fetch(`${apiBase(ctx)}/v1/${ctx.env.BUTTERBASE_APP_ID}/integrations/execute`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ctx.env.SERVICE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        toolName: "GMAIL_SEND_EMAIL",
+        userId: ctx.env.INVITATION_GMAIL_USER_ID,
+        params: { to: recipient.email, subject, body: message },
+      }),
+    });
+    const result = await res.json().catch(() => ({}));
+    if (res.ok && result.successful === true) {
+      sent += 1;
+    } else {
+      failures.push({ email: recipient.email });
+      console.error("broadcast delivery failed:", recipient.email, res.status);
+    }
+  }
+  return json({ total: recipients.length, sent, failed: failures.length, failures }, 200);
 }
 
 async function lookupAccountRecovery(ctx, body) {
