@@ -64,6 +64,8 @@ export async function handler(req, ctx) {
         return await resendInvitation(ctx, body);
       case "send-broadcast":
         return await sendBroadcast(ctx, body, adminEmail);
+      case "delete-students":
+        return await deleteStudents(ctx, body);
       case "recover-account":
         return await recoverAccount(ctx, body);
       case "lookup-account-recovery":
@@ -981,6 +983,30 @@ async function sendBroadcast(ctx, body, adminEmail) {
     }
   }
   return json({ total: recipients.length, sent, failed: failures.length, failures }, 200);
+}
+
+// Bulk student deletion for the roster. Enrollments are detached (their
+// student_id is SET NULL by the schema) rather than deleted, so payment and
+// attendance history survives; artwork photos cascade away with the student.
+// A student already deleted in another tab counts as deleted, so a bulk
+// selection can always complete.
+async function deleteStudents(ctx, body) {
+  assertOnlyKeys(body, ["action", "student_ids"]);
+  const rawIds = Array.isArray(body.student_ids) ? body.student_ids : [];
+  if (rawIds.length === 0) throw requestError("Select at least one student to delete");
+  if (rawIds.length > 100) throw requestError("Delete at most 100 students at a time");
+  const uniqueIds = [...new Set(rawIds.map((id) => validateUuid(id, "Student id")))];
+  let deleted = 0;
+  for (const studentId of uniqueIds) {
+    try {
+      await data(ctx, `students/${studentId}`, { method: "DELETE" });
+      deleted += 1;
+    } catch (error) {
+      if (error.status !== 404) throw error;
+      deleted += 1;
+    }
+  }
+  return json({ deleted }, 200);
 }
 
 async function lookupAccountRecovery(ctx, body) {

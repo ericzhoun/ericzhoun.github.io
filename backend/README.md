@@ -112,6 +112,19 @@ non-cancelled enrollment in that program, falling back to the enrollment's
 recipients; individual failures are reported per address and never abort the
 remaining deliveries.
 
+### Student deletion
+
+`delete-students` permanently removes roster students by id (max 100 per
+call, deduplicated; a student already deleted elsewhere counts as deleted).
+Enrollments survive with `student_id` set to NULL so payment and attendance
+history stay intact; artwork photos cascade away with the student via the
+schema. The CMS roster exposes it as checkbox multi-select plus a bulk
+"Delete selected" action with an explicit confirmation, alongside per-row
+View profile / Edit menus, client-side search, sorting, and CSV export.
+ClassManager additionally soft-deletes (restorable) students; that needs an
+`archived_at` column plus filtered reads everywhere, so it is a possible
+follow-up rather than part of this action.
+
 ## Checkout flows
 
 - Logged-in: `enroll-guard` (auth required) creates a pending enrollment for

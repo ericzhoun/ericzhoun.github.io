@@ -1553,3 +1553,37 @@ test("send-broadcast validates subject, message, audience, and program id", asyn
     assert.equal(res.status, 400, JSON.stringify(bad));
   }
 });
+
+// ---- student deletion ----
+
+test("delete-students removes each selected student, dedupes, and counts already-gone as deleted", async () => {
+  const firstId = "11111111-1111-4111-8111-111111111111";
+  const secondId = "22222222-2222-4222-8222-222222222222";
+  const res = await callHandler(request({
+    action: "delete-students",
+    student_ids: [firstId, secondId, firstId],
+  }), {
+    respond: (url, call) => {
+      if (call.method !== "DELETE") return { body: [] };
+      return url.endsWith(secondId) ? { ok: false, status: 404, body: { error: "not found" } } : { body: null };
+    },
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { deleted: 2 });
+  const deletes = res.calls.filter((call) => call.method === "DELETE");
+  assert.equal(deletes.length, 2);
+  assert.ok(deletes.every((call) => call.url.includes("/v1/app_test/students/")));
+});
+
+test("delete-students validates the id list", async () => {
+  const badRequests = [
+    { action: "delete-students", student_ids: [] },
+    { action: "delete-students", student_ids: "11111111-1111-4111-8111-111111111111" },
+    { action: "delete-students", student_ids: ["not-a-uuid"] },
+    { action: "delete-students", student_ids: ["11111111-1111-4111-8111-111111111111"], extra: "x" },
+  ];
+  for (const bad of badRequests) {
+    const res = await callHandler(request(bad), { respond: () => ({ body: [] }) });
+    assert.equal(res.status, 400, JSON.stringify(bad));
+  }
+});

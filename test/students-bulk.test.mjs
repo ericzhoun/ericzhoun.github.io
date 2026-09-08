@@ -1,0 +1,40 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { test } from "node:test";
+
+const readAdmin = () => readFile(new URL("../js/admin.js", import.meta.url), "utf8");
+
+test("roster has per-row checkboxes with select-all and a bulk action bar", async () => {
+  const script = await readAdmin();
+  assert.match(script, /id="roster-select-all"/);
+  assert.match(script, /data-action="sel:\$\{esc\(row\.id\)\}"/);
+  assert.match(script, /id="roster-bulk-bar"/);
+  assert.match(script, /Delete selected/);
+  assert.match(script, /Deselect all/);
+});
+
+test("roster delete confirms the consequences before calling delete-students", async () => {
+  const script = await readAdmin();
+  assert.match(script, /This cannot be undone/);
+  assert.match(script, /artwork photos are permanently removed/);
+  assert.match(script, /adminFn\("delete-students", \{ student_ids: ids \}\)/);
+});
+
+test("roster rows expose a three-dot menu with profile and edit actions", async () => {
+  const script = await readAdmin();
+  assert.match(script, /View profile/);
+  assert.match(script, /data-action="edit-student:\$\{esc\(row\.id\)\}"/);
+  assert.match(script, /adminFn\("update-student", \{ id: student\.id/);
+});
+
+test("roster supports client-side search and column sorting", async () => {
+  const script = await readAdmin();
+  assert.match(script, /id="roster-search"/);
+  assert.match(script, /data-action="sort:\$\{column\.field\}"/);
+});
+
+test("roster exports the roster as CSV", async () => {
+  const script = await readAdmin();
+  assert.match(script, /export-roster-csv/);
+  assert.match(script, /olivista-students-/);
+});

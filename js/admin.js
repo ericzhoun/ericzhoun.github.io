@@ -377,10 +377,13 @@ async function enrollments() {
 // internals are not admin-readable through the data gateway (billing order
 // reads are user-scoped), so this is the order book as recorded at checkout,
 // not a settlement report.
-function paymentsCsv(rows) {
+function csvLines(header, rows) {
   const quote = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-  const header = ["Date", "Student", "Customer", "Email", "Program", "Schedule", "Classes", "Unit price USD", "Discount %", "Amount USD", "Status"];
   return `\uFEFF${[header, ...rows].map((line) => line.map(quote).join(",")).join("\r\n")}`;
+}
+
+function paymentsCsv(rows) {
+  return csvLines(["Date", "Student", "Customer", "Email", "Program", "Schedule", "Classes", "Unit price USD", "Discount %", "Amount USD", "Status"], rows);
 }
 
 function sumDerivedPayments(items) {
@@ -459,6 +462,29 @@ async function payments() {
 // parent account has not been created yet. The admin can enroll them, record
 // credits, and mark attendance or 请假 (leave) - none of which require a
 // parent account. Parent accounts are attached later from the Accounts page.
+// Roster view state survives re-renders (and leaving/re-entering the page),
+// the way a table you stepped away from keeps your place.
+const rosterState = { selection: new Set(), search: "", sort: { field: "created_at", dir: "desc" } };
+
+const ROSTER_COLUMNS = [
+  { field: "name", label: "Student", sortable: true },
+  { field: "dob", label: "Date of birth", sortable: true },
+  { field: "parent", label: "Parent account", sortable: false },
+  { field: "enrollments", label: "Active enrollments", sortable: false },
+  { field: "created_at", label: "Date created", sortable: true },
+];
+
+function rosterInitials(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join("") || "?";
+}
+
+function sortRosterRows(rows, sort) {
+  const dir = sort.dir === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) =>
+    String(a[sort.field] ?? "").localeCompare(String(b[sort.field] ?? ""), undefined, { numeric: true }) * dir);
+}
+
 async function students() {
   const [studentRows, enrollmentRows, { accounts }] = await Promise.all([
     adminData.read("students", { order: [{ field: "created_at", direction: "desc" }] }),
@@ -471,27 +497,195 @@ async function students() {
     if (!en.student_id || en.status === "cancelled") return;
     activeEnrollments.set(en.student_id, (activeEnrollments.get(en.student_id) || 0) + 1);
   });
-  const rosterRows = studentRows.map((student) => {
+  const rowsWithMeta = studentRows.map((student) => {
     const account = student.user_id ? accountByUser.get(student.user_id) : null;
-    const parentCell = account
-      ? `${esc(account.name || "Parent account")}${account.email ? `<br><span class="muted">${esc(account.email)}</span>` : ""}`
-      : `<span class="status-badge status-pending">No account yet</span>`;
-    return `<tr>
-      <td>${esc(student.name)}</td><td>${esc(student.age ?? "-")}</td>
-      <td>${parentCell}</td><td>${activeEnrollments.get(student.id) || 0}</td>
-      <td>${button("Manage", `student:${esc(student.id)}`)}</td></tr>`;
-  }).join("");
-  app.innerHTML = `<div class="admin-crud-header"><h1>Student Roster</h1>${button("+ Add student", "add-student-form")}</div>
-    <p class="muted">Students marked "No account yet" are recorded standalone - you can still enroll them, record credits, and mark attendance or 请假 (leave). Attach the parent account later from Accounts.</p>
+    return {
+      ...student,
+      parent: account ? (account.name || "Parent account") : "",
+      parentEmail: account ? (account.email || "") : "",
+      enrollments: activeEnrollments.get(student.id) || 0,
+    };
+  });
+
+  const visibleRows = () => {
+    const term = rosterState.search.trim().toLowerCase();
+    const filtered = term
+      ? rowsWithMeta.filter((row) => `${row.name} ${row.parent} ${row.parentEmail}`.toLowerCase().includes(term))
+      : rowsWithMeta;
+    return sortRosterRows(filtered, rosterState.sort);
+  };
+
+  const syncSelectionUi = () => {
+    const visible = visibleRows();
+    const selectedVisible = visible.filter((row) => rosterState.selection.has(row.id)).length;
+    const bar = document.querySelector("#roster-bulk-bar");
+    if (bar) {
+      bar.hidden = rosterState.selection.size === 0;
+      const label = bar.querySelector("[data-selection-count]");
+      if (label) label.textContent = `${rosterState.selection.size} selected`;
+    }
+    const box = document.querySelector("#roster-select-all");
+    if (box) {
+      box.checked = visible.length > 0 && selectedVisible === visible.length;
+      box.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
+    }
+  };
+
+  const renderRoster = () => {
+    const rows = visibleRows();
+    const bodyRows = rows.map((row) => {
+      const menu = `<details class="roster-menu"><summary aria-label="Row actions">&#8943;</summary>
+        <div class="roster-menu-items">
+          <button type="button" data-action="student:${esc(row.id)}">View profile</button>
+          <button type="button" data-action="edit-student:${esc(row.id)}">Edit</button>
+        </div></details>`;
+      const parentCell = row.parent
+        ? `${esc(row.parent)}${row.parentEmail ? `<br><span class="muted">${esc(row.parentEmail)}</span>` : ""}`
+        : `<span class="status-badge status-pending">No account yet</span>`;
+      return `<tr data-student-row="${esc(row.id)}">
+        <td><input type="checkbox" aria-label="Select ${esc(row.name)}" data-action="sel:${esc(row.id)}" ${rosterState.selection.has(row.id) ? "checked" : ""}></td>
+        <td><span class="roster-avatar">${esc(rosterInitials(row.name))}</span> ${esc(row.name)}${row.age != null ? ` <span class="muted">(${esc(row.age)})</span>` : ""}</td>
+        <td>${esc(row.dob ?? "-")}</td>
+        <td>${parentCell}</td><td>${row.enrollments}</td>
+        <td>${date(row.created_at)}</td>
+        <td>${menu}</td></tr>`;
+    }).join("");
+    const sortArrow = (field) => (rosterState.sort.field === field ? (rosterState.sort.dir === "asc" ? " up" : " down") : "");
+    const headers = ["<input type=\"checkbox\" id=\"roster-select-all\" aria-label=\"Select all rows\">",
+      ...ROSTER_COLUMNS.map((column) => column.sortable
+        ? `<button type="button" class="roster-sort" data-action="sort:${column.field}">${column.label}${sortArrow(column.field)}</button>`
+        : column.label),
+      "Actions"].map((label) => `<th>${label}</th>`).join("");
+    const bulkBar = `<div id="roster-bulk-bar" class="admin-crud-header" hidden>
+      <p style="margin:0;"><b data-selection-count>0 selected</b></p>
+      <div>${button("Delete selected", "delete-selected-students", "btn btn-sm btn-danger")}${button("Deselect all", "deselect-all", "btn btn-sm btn-secondary")}</div>
+    </div>`;
+    document.querySelector("#roster-slot").innerHTML = `
+      ${bulkBar}
+      ${table(headers, bodyRows)}
+      <p class="muted" style="margin-top:10px;">${rows.length} of ${rowsWithMeta.length} students shown</p>`;
+    syncSelectionUi();
+  };
+
+  app.innerHTML = `<div class="admin-crud-header"><h1>Student Roster</h1><div class="admin-header-actions">${button("Export CSV", "export-roster-csv", "btn btn-sm btn-secondary")}${button("+ Add student", "add-student-form")}</div></div>
+    <p class="muted">Students marked "No account yet" are recorded standalone - you can still enroll them, record credits, and mark attendance or excused leave. Attach the parent account later from Accounts.</p>
+    <p style="margin:12px 0;"><input id="roster-search" type="search" placeholder="Search name, parent, or email" style="max-width:320px;width:100%;padding:8px 10px;border:1px solid var(--color-border);"></p>
     <div id="form-slot"></div>
-    ${table(["Name", "Age", "Parent Account", "Active Enrollments", "Actions"], rosterRows)}`;
+    <div id="roster-slot"></div>`;
+  renderRoster();
+
+  document.querySelector("#roster-slot").addEventListener("input", (event) => {
+    if (event.target.id !== "roster-search") return;
+    rosterState.search = event.target.value;
+    renderRoster();
+  });
+
   accountViewClick.listen(app, "click", async (event) => {
     const action = event.target.dataset.action || "";
+    document.querySelectorAll(".roster-menu[open]").forEach((menu) => {
+      if (!menu.contains(event.target)) menu.open = false;
+    });
     if (action === "add-student-form") { renderAddStudentForm(accounts); return; }
+    if (action === "export-roster-csv") {
+      const csvRows = rowsWithMeta.map((row) => [row.name, row.age ?? "", row.dob ?? "", row.parent, row.parentEmail, row.enrollments, row.created_at ?? ""]);
+      const blob = new Blob([csvLines(["Name", "Age", "Date of birth", "Parent account", "Parent email", "Active enrollments", "Date created"], csvRows)], { type: "text/csv" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `olivista-students-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+      return;
+    }
+    if (action.startsWith("sort:")) {
+      const field = action.slice("sort:".length);
+      rosterState.sort = { field, dir: rosterState.sort.field === field && rosterState.sort.dir === "asc" ? "desc" : "asc" };
+      renderRoster();
+      return;
+    }
+    if (action === "deselect-all") {
+      rosterState.selection.clear();
+      renderRoster();
+      return;
+    }
+    if (action.startsWith("sel:")) {
+      const id = action.slice("sel:".length);
+      if (event.target.checked) rosterState.selection.add(id); else rosterState.selection.delete(id);
+      syncSelectionUi();
+      return;
+    }
+    if (action === "sel-all") {
+      const visible = visibleRows();
+      if (event.target.checked) visible.forEach((row) => rosterState.selection.add(row.id));
+      else visible.forEach((row) => rosterState.selection.delete(row.id));
+      renderRoster();
+      return;
+    }
+    if (action === "delete-selected-students") {
+      const selected = rowsWithMeta.filter((row) => rosterState.selection.has(row.id));
+      document.querySelector("#form-slot").innerHTML = `<div class="admin-form">
+        <h3>Delete ${selected.length === 1 ? esc(selected[0].name) : `${selected.length} students`}?</h3>
+        <p class="auth-error" id="form-error" hidden></p>
+        <p>This cannot be undone. Their enrollments are kept in payment and attendance history but detached from the roster, and their artwork photos are permanently removed.</p>
+        <div class="form-actions">${button("Delete", "confirm-delete-students", "btn btn-sm btn-danger")}${button("Cancel", "cancel-delete-students")}</div>
+      </div>`;
+      return;
+    }
+    if (action === "cancel-delete-students") {
+      document.querySelector("#form-slot").innerHTML = "";
+      return;
+    }
+    if (action === "confirm-delete-students") {
+      const ids = rowsWithMeta.filter((row) => rosterState.selection.has(row.id)).map((row) => row.id);
+      const confirmButton = event.target;
+      confirmButton.disabled = true;
+      try {
+        const result = await adminFn("delete-students", { student_ids: ids });
+        rosterState.selection.clear();
+        notify(`Deleted ${result.deleted} student${result.deleted === 1 ? "" : "s"}.`);
+        await students();
+      } catch (error) {
+        const errorSlot = document.querySelector("#form-error");
+        if (errorSlot) { errorSlot.textContent = error.message || "Could not delete. Please try again."; errorSlot.hidden = false; }
+        confirmButton.disabled = false;
+      }
+      return;
+    }
+    if (action.startsWith("edit-student:")) {
+      const student = rowsWithMeta.find((s) => s.id === action.slice("edit-student:".length));
+      if (student) renderEditStudentForm(student);
+      return;
+    }
     if (!action.startsWith("student:")) return;
-    const student = studentRows.find((s) => s.id === action.slice("student:".length));
+    const student = rowsWithMeta.find((s) => s.id === action.slice("student:".length));
     if (student) await studentDetail(student);
   });
+
+  function renderEditStudentForm(student) {
+    document.querySelector("#form-slot").innerHTML = `<form id="record-form" class="admin-form">
+      <h3>Edit student</h3><p class="auth-error" id="form-error" hidden></p>
+      <label>Name<input name="name" required value="${esc(student.name)}"></label>
+      <label>Date of birth<input name="dob" type="date" required value="${esc(student.dob ?? "")}"></label>
+      <label>Notes<textarea name="notes">${esc(student.notes || "")}</textarea></label>
+      <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button>
+      <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-edit-student">Cancel</button></div></form>`;
+    const formElement = document.querySelector("#record-form");
+    const errorElement = formElement.querySelector("#form-error");
+    formElement.querySelector('[data-action="cancel-edit-student"]').addEventListener("click", () => { document.querySelector("#form-slot").innerHTML = ""; });
+    formElement.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const saveButton = formElement.querySelector("[data-save-button]");
+      saveButton.disabled = true; saveButton.textContent = "Saving."; errorElement.hidden = true;
+      const data = Object.fromEntries(new FormData(e.currentTarget));
+      try {
+        await adminFn("update-student", { id: student.id, name: data.name, dob: data.dob, notes: data.notes });
+        notify("Student updated.");
+        await students();
+      } catch (error) {
+        errorElement.textContent = error.message || "Could not save. Please try again.";
+        errorElement.hidden = false; saveButton.disabled = false; saveButton.textContent = "Save";
+      }
+    });
+  }
 }
 
 function renderAddStudentForm(accounts) {
