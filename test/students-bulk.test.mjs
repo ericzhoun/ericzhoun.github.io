@@ -13,6 +13,12 @@ test("roster has per-row checkboxes with select-all and a bulk action bar", asyn
   assert.match(script, /Deselect all/);
 });
 
+test("roster passes the header array to table() instead of pre-rendered th cells", async () => {
+  const script = await readAdmin();
+  assert.match(script, /table\(headers, bodyRows\)/);
+  assert.doesNotMatch(script, /<th>\$\{label\}<\/th>/);
+});
+
 test("roster delete confirms the consequences before calling delete-students", async () => {
   const script = await readAdmin();
   assert.match(script, /This cannot be undone/);

@@ -623,7 +623,7 @@ async function students() {
       ...ROSTER_COLUMNS.map((column) => column.sortable
         ? `<button type="button" class="roster-sort" data-action="sort:${column.field}">${column.label}${sortArrow(column.field)}</button>`
         : column.label),
-      "Actions"].map((label) => `<th>${label}</th>`).join("");
+      "Actions"];
     const bulkBar = `<div id="roster-bulk-bar" class="admin-crud-header" hidden>
       <p style="margin:0;"><b data-selection-count>0 selected</b></p>
       <div>${button("Delete selected", "delete-selected-students", "btn btn-sm btn-danger")}${button("Deselect all", "deselect-all", "btn btn-sm btn-secondary")}</div>
