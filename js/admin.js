@@ -789,29 +789,66 @@ function renderAddStudentForm(accounts) {
   });
 }
 
-// Per-student management, built for standalone students (no parent account
-// yet). Parented students can be managed here too; a link opens their
-// parent's account page for account-level work.
+// Per-student profile, modeled on Zenamu's client detail page: identity
+// header, stat cards, a contact card, enrollments and credits, attendance
+// history, and a small activity feed. Built for standalone students (no
+// parent account yet) as well as parented ones; the parent link opens
+// account-level work.
 async function studentDetail(student) {
-  const [enrollmentRows, schedules, programs, accountsResult] = await Promise.all([
+  const [enrollmentRows, allSchedules, programs, accountsResult, bookingRows, sessionRows] = await Promise.all([
     adminData.read("enrollments", {
       filters: [{ field: "student_id", operator: "eq", value: student.id }],
       order: [{ field: "created_at", direction: "desc" }],
     }),
-    adminData.read("class_schedules", {
-      filters: [{ field: "active", operator: "eq", value: true }],
-      order: [{ field: "created_at", direction: "desc" }],
-    }),
+    adminData.read("class_schedules", {}),
     adminData.read("programs", { order: [{ field: "sort_order", direction: "asc" }] }),
     adminFn("list-accounts"),
+    adminData.read("bookings", { select: ["id", "enrollment_id", "session_id", "status", "booked_at"] }),
+    adminData.read("class_sessions", { select: ["id", "class_date", "schedule_id", "status"], order: [{ field: "class_date", direction: "asc" }], limit: 200 }),
   ]);
   const account = student.user_id
     ? accountsResult.accounts.find((a) => a.user_id === student.user_id) || null
     : null;
-  const programName = (id) => programs.find((p) => p.id === id)?.name || "-";
-  const scheduleLabel = (s) => `${programName(s.program_id)} - ${s.day_of_week} ${formatTime(s.start_time)} (${s.age_group})`;
+  let pendingFamily = null;
+  if (student.pending_parent_id) {
+    const pendingRows = await adminData.read("pending_parents", { filters: [{ field: "id", operator: "eq", value: student.pending_parent_id }] });
+    pendingFamily = pendingRows[0] || null;
+  }
+  const schedules = allSchedules.filter((schedule) => schedule.active);
+  const programById = new Map(programs.map((program) => [program.id, program]));
+  const scheduleById = new Map(allSchedules.map((schedule) => [schedule.id, schedule]));
+  const programName = (id) => programById.get(id)?.name || "-";
+  const scheduleLabel = (schedule) => schedule
+    ? `${programName(schedule.program_id)} - ${schedule.day_of_week} ${formatTime(schedule.start_time)} (${schedule.age_group})`
+    : "Session";
+
+  const sessionById = new Map(sessionRows.map((session) => [session.id, session]));
+  const enrollmentIds = new Set(enrollmentRows.map((enrollment) => enrollment.id));
+  const studentBookings = bookingRows
+    .filter((booking) => enrollmentIds.has(booking.enrollment_id))
+    .map((booking) => {
+      const session = sessionById.get(booking.session_id);
+      const schedule = session ? scheduleById.get(session.schedule_id) : null;
+      return { ...booking, classDate: (session && session.class_date) || booking.booked_at, label: schedule ? scheduleLabel(schedule) : "Session" };
+    })
+    .sort((a, b) => String(b.classDate || "").localeCompare(String(a.classDate || "")));
+  const attendedCount = studentBookings.filter((booking) => booking.status === "attended").length;
+  const scheduledCount = studentBookings.filter((booking) => booking.status === "scheduled").length;
+  const creditsRemaining = enrollmentRows
+    .filter((enrollment) => enrollment.status !== "cancelled")
+    .reduce((total, enrollment) => total + Number(enrollment.num_classes_enrolled || 0), 0) - attendedCount;
+  const phone = enrollmentRows.map((enrollment) => enrollment.student_phone).find((value) => value)
+    || (pendingFamily && pendingFamily.student_phone) || null;
+  const email = (account && account.email)
+    || (pendingFamily && pendingFamily.email)
+    || enrollmentRows.map((enrollment) => enrollment.student_email).find((value) => value) || null;
+  const parentName = account ? (account.name || "Parent account") : (pendingFamily && pendingFamily.parent_name) || null;
+  const accountBadge = account
+    ? '<span class="status-badge status-confirmed">Parent account linked</span>'
+    : (pendingFamily ? '<span class="status-badge status-pending">Pending family</span>' : '<span class="status-badge status-pending">Standalone</span>');
+
   const enrollmentRowsHtml = enrollmentRows.map((en) => {
-    const schedule = schedules.find((s) => s.id === en.schedule_id);
+    const schedule = allSchedules.find((s) => s.id === en.schedule_id);
     const typeBadge = en.enrollment_type === "trial" ? ` <span class="status-badge status-trial">Trial</span>` : "";
     return `<tr>
       <td>${esc(schedule ? scheduleLabel(schedule) : "-")}${typeBadge}</td>
@@ -822,18 +859,47 @@ async function studentDetail(student) {
     </tr>`;
   }).join("");
   const scheduleOptions = schedules.map((s) => `<option value="${esc(s.id)}">${esc(scheduleLabel(s))}</option>`).join("");
-  const parentLine = account
-    ? `<p class="muted">Parent: ${esc(account.name || "Parent account")}${account.email ? ` · ${esc(account.email)}` : ""}</p>`
-    : `<p class="muted">No parent account yet - attendance, credits, and 请假 (leave) are recorded standalone.</p>`;
 
-  app.innerHTML = `<div class="admin-crud-header"><h1>${esc(student.name)}</h1>
-      <div class="admin-header-actions">${account ? button("Open parent account", "open-parent-account", "btn btn-sm btn-secondary") : ""}${button("← Back to Roster", "back-to-roster")}</div></div>
-    ${parentLine}
+  const historyRows = studentBookings.slice(0, 20).map((booking) => {
+    const status = ATTENDANCE_LABELS[booking.status] || { label: booking.status, className: "date-passed" };
+    return `<tr><td>${date(booking.classDate)}</td><td>${esc(booking.label)}</td><td><span class="status-badge status-${status.className}">${status.label}</span></td></tr>`;
+  }).join("");
+
+  const events = [
+    ...(student.created_at ? [{ when: student.created_at, text: "Student added." }] : []),
+    ...enrollmentRows.map((enrollment) => {
+      const schedule = allSchedules.find((s) => s.id === enrollment.schedule_id);
+      return { when: enrollment.created_at, text: `Enrolled in ${schedule ? scheduleLabel(schedule) : "a class"} (${enrollment.status}).` };
+    }),
+    ...studentBookings.map((booking) => ({ when: booking.booked_at || booking.classDate, text: `${(ATTENDANCE_LABELS[booking.status] || { label: booking.status }).label} - ${booking.label}.` })),
+  ].sort((a, b) => String(b.when || "").localeCompare(String(a.when || ""))).slice(0, 8);
+  const activityRows = events.map((event) => `<tr><td style="white-space:nowrap;">${date(event.when)}</td><td>${esc(event.text)}</td></tr>`).join("");
+
+  app.innerHTML = `<div class="admin-crud-header"><h1><span class="roster-avatar" style="width:44px;height:44px;font-size:16px;">${esc(rosterInitials(student.name))}</span> ${esc(student.name)}</h1>
+      <div class="admin-header-actions">${button("Edit profile", "edit-student", "btn btn-sm btn-secondary")}${account ? button("Open parent account", "open-parent-account", "btn btn-sm btn-secondary") : ""}${button("Delete", "delete-student", "btn btn-sm btn-danger")}${button("Back to Roster", "back-to-roster")}</div></div>
+    <p>${accountBadge}${student.age != null ? ` <span class="status-badge status-confirmed">Age ${esc(student.age)}</span>` : ""}${attendedCount > 0 ? ` <span class="status-badge status-confirmed">${attendedCount} attended</span>` : ""}</p>
+    <div class="stat-grid" style="grid-template-columns:repeat(4,minmax(0,1fr));">
+      <span class="stat-card"><span class="stat-number">${studentBookings.length}</span><span class="stat-label">Total bookings</span></span>
+      <span class="stat-card"><span class="stat-number">${scheduledCount}</span><span class="stat-label">Active bookings</span></span>
+      <span class="stat-card"><span class="stat-number">${attendedCount}</span><span class="stat-label">Classes attended</span></span>
+      <span class="stat-card"><span class="stat-number">${creditsRemaining}</span><span class="stat-label">Credits remaining</span></span>
+    </div>
     <div id="form-slot"></div>
-    <section><div class="admin-crud-header"><h2>Student profile</h2>${button("Edit", "edit-student")}</div>
-      ${table(["Name", "Age", "DOB", "Notes"], `<tr><td>${esc(student.name)}</td><td>${esc(student.age ?? "-")}</td><td>${esc(student.dob ?? "-")}</td><td>${esc(student.notes || "-")}</td></tr>`)}</section>
+    <section><div class="admin-crud-header"><h2>Profile &amp; contact</h2></div>
+      ${table(["Field", "Value"], `<tr><td>Date of birth</td><td>${esc(student.dob || "-")}</td></tr>
+        <tr><td>Phone</td><td>${esc(phone || "not set")}</td></tr>
+        <tr><td>Email</td><td>${esc(email || "not set")}</td></tr>
+        <tr><td>Parent</td><td>${esc(parentName || "not set")}</td></tr>
+        <tr><td>Emergency contact</td><td>${esc((pendingFamily && pendingFamily.emergency_contact) || "not set")}</td></tr>
+        <tr><td>Allergies</td><td>${esc((pendingFamily && pendingFamily.allergies) || "not set")}</td></tr>
+        <tr><td>Registered</td><td>${date(student.created_at)}</td></tr>
+        <tr><td>Notes</td><td>${esc(student.notes || "not set")}</td></tr>`)}</section>
     <section><div class="admin-crud-header"><h2>Enrollments &amp; Credits</h2>${scheduleOptions ? button("+ Comp enrollment", "add-enrollment-form") : ""}</div>
-      ${table(["Class", "Status", "Credits", "Actions"], enrollmentRowsHtml)}</section>`;
+      ${table(["Class", "Status", "Credits", "Actions"], enrollmentRowsHtml)}</section>
+    <section><div class="admin-crud-header"><h2>Attendance history</h2></div>
+      ${historyRows ? table(["Date", "Class", "Status"], historyRows) : `<p class="muted">No attendance recorded yet.</p>`}</section>
+    <section><div class="admin-crud-header"><h2>Activity</h2></div>
+      ${activityRows ? table(["When", "Event"], activityRows) : `<p class="muted">No activity yet.</p>`}</section>`;
   renderNotification();
 
   const slot = () => document.querySelector("#form-slot");
@@ -845,7 +911,7 @@ async function studentDetail(student) {
     formEl.addEventListener("submit", async (e) => {
       e.preventDefault();
       const saveButton = formEl.querySelector("[data-save-button]");
-      saveButton.disabled = true; saveButton.textContent = "Saving…"; errorEl.hidden = true;
+      saveButton.disabled = true; saveButton.textContent = "Saving."; errorEl.hidden = true;
       try {
         await onSubmit(Object.fromEntries(new FormData(e.currentTarget)));
         await studentDetail(student);
@@ -861,6 +927,30 @@ async function studentDetail(student) {
     if (action === "back-to-roster") { await students(); return; }
     if (action === "open-parent-account" && account) {
       await accountDetail(account.user_id, account.email, account.name);
+      return;
+    }
+    if (action === "delete-student") {
+      slot().innerHTML = `<div class="admin-form">
+        <h3>Delete ${esc(student.name)}?</h3>
+        <p class="auth-error" id="form-error" hidden></p>
+        <p>This cannot be undone. Their enrollments are kept in payment and attendance history but detached from the roster, and their artwork photos are permanently removed.</p>
+        <div class="form-actions">${button("Delete", "confirm-delete-student", "btn btn-sm btn-danger")}${button("Cancel", "cancel-delete-student", "btn btn-sm btn-secondary")}</div>
+      </div>`;
+      return;
+    }
+    if (action === "cancel-delete-student") { slot().innerHTML = ""; return; }
+    if (action === "confirm-delete-student") {
+      const confirmButton = event.target;
+      confirmButton.disabled = true;
+      try {
+        const result = await adminFn("delete-students", { student_ids: [student.id] });
+        notify(`Deleted ${result.deleted} student.`);
+        await students();
+      } catch (error) {
+        const errorSlot = document.querySelector("#form-error");
+        if (errorSlot) { errorSlot.textContent = error.message || "Could not delete. Please try again."; errorSlot.hidden = false; }
+        confirmButton.disabled = false;
+      }
       return;
     }
     if (action === "edit-student") {
@@ -918,6 +1008,7 @@ async function studentDetail(student) {
     }
   });
 }
+
 async function sessions() {
   const [items, schedules, programs] = await Promise.all([
     adminData.read("class_sessions", { order: [{ field: "class_date", direction: "asc" }], limit: 200 }),
