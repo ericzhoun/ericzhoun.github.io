@@ -22,6 +22,7 @@ test("privacy page exists and follows the shared page conventions", async () => 
 });
 
 test("public pages link the privacy policy in the footer", async () => {
+  // privacy.html itself is excluded - no self-referencing footer link.
   const pages = [
     "about.html",
     "account.html",
@@ -32,7 +33,6 @@ test("public pages link the privacy policy in the footer", async () => {
     "index.html",
     "login.html",
     "portfolio.html",
-    "privacy.html",
     "registration.html",
     "schedule.html",
     "signup.html",
