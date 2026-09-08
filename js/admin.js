@@ -13,6 +13,7 @@ import { getToken, getUser, isAdmin, logout, refreshToken } from "./auth.js";
 const nav = [
   ["dashboard", "Dashboard"], ["programs", "Programs"], ["semesters", "Semesters"],
   ["schedules", "Schedules"], ["sessions", "Sessions"], ["enrollments", "Enrollments"],
+  ["payments", "Payments"],
   ["students", "Students"], ["accounts", "Accounts"],
 ];
 const app = document.querySelector("#admin-app");
@@ -367,6 +368,90 @@ async function enrollments() {
       status: action.startsWith("confirm:") ? "confirmed" : "cancelled",
     });
     render();
+  }, { once: true });
+}
+// Payments ledger: shows each enrollment's recorded order total
+// (enrollments.total_paid_cents - list price x classes minus any early-bird
+// discount; trials and comped enrollments are written as 0). Stripe order
+// internals are not admin-readable through the data gateway (billing order
+// reads are user-scoped), so this is the order book as recorded at checkout,
+// not a settlement report.
+function paymentsCsv(rows) {
+  const quote = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const header = ["Date", "Student", "Customer", "Email", "Program", "Schedule", "Classes", "Unit price USD", "Discount %", "Amount USD", "Status"];
+  return `\uFEFF${[header, ...rows].map((line) => line.map(quote).join(",")).join("\r\n")}`;
+}
+
+function sumDerivedPayments(items) {
+  return items.reduce((total, entry) => (entry.amountCents == null ? total : total + entry.amountCents), 0);
+}
+
+async function payments() {
+  const [items, schedules, programs] = await Promise.all([
+    adminData.read("enrollments", { order: [{ field: "created_at", direction: "desc" }] }),
+    adminData.read("class_schedules", {}),
+    adminData.read("programs", {}),
+  ]);
+  const scheduleById = new Map(schedules.map((schedule) => [schedule.id, schedule]));
+  const programById = new Map(programs.map((program) => [program.id, program]));
+  const money = (cents) => (cents == null ? "-" : `$${(cents / 100).toFixed(2)}`);
+  const enriched = items.map((enrollment) => {
+    const schedule = scheduleById.get(enrollment.schedule_id);
+    const unitCents = enrollment.price_per_class_cents != null
+      ? enrollment.price_per_class_cents
+      : (schedule && schedule.price_cents != null ? schedule.price_cents : null);
+    const classes = Number(enrollment.num_classes_enrolled || 0);
+    const amountCents = enrollment.total_paid_cents != null
+      ? enrollment.total_paid_cents
+      : (unitCents != null ? unitCents * classes : null);
+    const discountPct = Number(enrollment.discount_pct || 0);
+    const program = schedule ? programById.get(schedule.program_id) : null;
+    const customer = enrollment.parent_name || enrollment.customer_name || "Not provided";
+    const scheduleLabel = schedule ? `${schedule.day_of_week} ${schedule.start_time}` : "-";
+    return { enrollment, program, customer, scheduleLabel, unitCents, classes, discountPct, amountCents };
+  });
+  const billed = sumDerivedPayments(enriched.filter((entry) => entry.enrollment.status === "confirmed"));
+  const pending = sumDerivedPayments(enriched.filter((entry) => entry.enrollment.status === "pending"));
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const billedThisMonth = sumDerivedPayments(enriched.filter((entry) => entry.enrollment.status === "confirmed" && new Date(entry.enrollment.created_at) >= monthStart));
+  const billedFamilies = new Set(enriched.filter((entry) => entry.enrollment.status === "confirmed" && entry.amountCents > 0).map((entry) => entry.enrollment.student_email)).size;
+  const ledgerRows = enriched.map(({ enrollment, program, customer, scheduleLabel, unitCents, classes, discountPct, amountCents }) =>
+    `<tr><td>${date(enrollment.created_at)}</td><td>${esc(enrollment.student_name)}</td><td>${esc(customer)}</td><td>${esc(enrollment.student_email)}</td><td>${esc(program ? program.name : "-")}</td><td>${esc(scheduleLabel)}</td><td>${classes || "-"}</td><td>${money(unitCents)}${discountPct > 0 ? ` <span class="muted">-${discountPct}%</span>` : ""}</td><td>${money(amountCents)}</td><td><span class="status-badge status-${enrollment.status}">${esc(enrollment.status)}</span></td></tr>`
+  ).join("\n");
+  const csvRows = enriched.map(({ enrollment, program, customer, scheduleLabel, unitCents, classes, discountPct, amountCents }) =>
+    [
+      enrollment.created_at ? new Date(enrollment.created_at).toISOString() : "",
+      enrollment.student_name,
+      customer,
+      enrollment.student_email,
+      program ? program.name : "",
+      scheduleLabel,
+      classes || "",
+      unitCents != null ? (unitCents / 100).toFixed(2) : "",
+      discountPct ? String(discountPct) : "",
+      amountCents != null ? (amountCents / 100).toFixed(2) : "",
+      enrollment.status,
+    ]
+  );
+  app.innerHTML = `<div class="admin-crud-header"><h1>Payments</h1>${button("Export CSV", "export-payments-csv")}</div>
+    <div class="stat-grid" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <span class="stat-card"><span class="stat-number">${money(billed)}</span><span class="stat-label">Billed (confirmed)</span></span>
+      <span class="stat-card"><span class="stat-number">${money(pending)}</span><span class="stat-label">Pending</span></span>
+      <span class="stat-card"><span class="stat-number">${money(billedThisMonth)}</span><span class="stat-label">Billed this month</span></span>
+      <span class="stat-card"><span class="stat-number">${billedFamilies}</span><span class="stat-label">Families billed</span></span>
+    </div>
+    <p class="muted">Amounts are each enrollment's recorded order total - list price × classes, minus any early-bird discount; trials and comped enrollments count as $0, and cancelled enrollments are excluded from the totals above. Captured charges settle in Stripe via Butterbase billing.</p>
+    ${table(["Date", "Student", "Customer", "Email", "Program", "Schedule", "Classes", "Unit Price", "Amount", "Status"], ledgerRows)}`;
+  app.addEventListener("click", (event) => {
+    if (event.target.dataset.action !== "export-payments-csv") return;
+    const blob = new Blob([paymentsCsv(csvRows)], { type: "text/csv" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `olivista-payments-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
   }, { once: true });
 }
 // Student roster: every recorded student, including standalone students whose
@@ -1131,5 +1216,5 @@ async function accountDetail(userId, email, name, accountState = null) {
   });
 }
 
-async function render() { accountViewClick.clear(); if (!guard()) return; renderNav(); try { const id = query(); if (id === "dashboard") await dashboard(); else if (configs[id]) await crud(id); else if (id === "enrollments") await enrollments(); else if (id === "students") await students(); else if (id === "sessions") await sessions(); else if (id === "accounts") await accounts(); else app.innerHTML = `<h1>${id[0].toUpperCase() + id.slice(1)}</h1><p class="muted">Section unavailable.</p>`; renderNotification(); } catch (err) { app.innerHTML = `<p class="auth-error">${esc(err.message)}</p>`; } }
+async function render() { accountViewClick.clear(); if (!guard()) return; renderNav(); try { const id = query(); if (id === "dashboard") await dashboard(); else if (configs[id]) await crud(id); else if (id === "enrollments") await enrollments(); else if (id === "payments") await payments(); else if (id === "students") await students(); else if (id === "sessions") await sessions(); else if (id === "accounts") await accounts(); else app.innerHTML = `<h1>${id[0].toUpperCase() + id.slice(1)}</h1><p class="muted">Section unavailable.</p>`; renderNotification(); } catch (err) { app.innerHTML = `<p class="auth-error">${esc(err.message)}</p>`; } }
 window.addEventListener("hashchange", render); document.querySelector("#admin-logout").addEventListener("click", async () => { await logout(); location.href = "index.html"; }); render();

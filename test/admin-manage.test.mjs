@@ -1042,6 +1042,23 @@ test("admin-data exposes the fields the roster and attendance sheet need", async
   assert.match(read.url, /schedule_id=eq\./);
 });
 
+test("admin-data exposes order money fields for the payments ledger", async () => {
+  const res = await callHandler(request({
+    action: "admin-data",
+    operation: "read",
+    resource: "enrollments",
+    query: {
+      select: ["id", "total_paid_cents", "price_per_class_cents", "discount_pct"],
+      filters: [{ field: "schedule_id", operator: "eq", value: OTHER_SCHEDULE_UUID }],
+    },
+  }));
+  assert.equal(res.status, 200);
+  const read = dataCalls(res).find((call) => call.url.includes("/enrollments?"));
+  assert.match(read.url, /total_paid_cents/);
+  assert.match(read.url, /price_per_class_cents/);
+  assert.match(read.url, /discount_pct/);
+});
+
 test("admin-data allows parent_profiles reads for the roster and blocks writes", async () => {
   const read = await callHandler(request({ action: "admin-data", operation: "read", resource: "parent_profiles" }));
   assert.equal(read.status, 200);

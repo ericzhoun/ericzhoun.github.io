@@ -208,7 +208,8 @@ const ADMIN_DATA_RESOURCES = {
     read: [
       "id", "user_id", "student_id", "schedule_id", "enrollment_type", "student_name",
       "student_email", "student_phone", "parent_name", "customer_name", "status",
-      "num_classes_enrolled", "created_at", "updated_at",
+      "num_classes_enrolled", "price_per_class_cents", "discount_pct", "total_paid_cents",
+      "created_at", "updated_at",
     ],
     filters: {
       id: "uuid", user_id: "uuid", student_id: "uuid", schedule_id: "uuid",
