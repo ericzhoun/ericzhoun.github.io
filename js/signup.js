@@ -1,7 +1,7 @@
 // Signup page logic — passwordless two-step flow:
 // 1. Collect name + email → send a 6-digit verification code via email
 // 2. User enters the code → verify + create/login account
-import { isLoggedIn, sendMagicLink, verifyMagicLink, claimEnrollments } from "./auth.js";
+import { isLoggedIn, sendMagicLink, verifyMagicLink, claimEnrollments, beginGoogleSignIn } from "./auth.js";
 import { getQueryParam, SITE_URL } from "./api.js";
 import { canonicalSiteUrl } from "./login-flow.js";
 
@@ -111,4 +111,10 @@ form.addEventListener("submit", async (e) => {
     submitBtn.disabled = false;
     submitBtn.textContent = step === "verify" ? "Verify & Create Account" : label;
   }
+});
+
+// Google sign-up shares the login flow - Butterbase creates the account on
+// first Google sign-in, so no separate Google signup step is needed.
+document.getElementById("google-signup").addEventListener("click", () => {
+  beginGoogleSignIn(getQueryParam("next"));
 });

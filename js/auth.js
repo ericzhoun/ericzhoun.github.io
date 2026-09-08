@@ -1,6 +1,12 @@
 // Auth helpers - email/password and magic-link auth against the Butterbase
 // backend, tokens cached in localStorage. Ported from herfield app/lib/auth.js.
 import { AUTH_BASE, API_BASE, SITE_URL, fetchWithTimeout } from "./api.js";
+import {
+  googleOAuthUrl,
+  oauthCallbackParams,
+  oauthErrorMessage,
+  resolveOAuthNext,
+} from "./oauth-flow.js";
 
 const TOKEN_KEY = "olivistart_access_token";
 const REFRESH_KEY = "olivistart_refresh_token";
@@ -202,4 +208,67 @@ export function requireAuth() {
     return null;
   }
   return user;
+}
+
+// ---------------------------------------------------------------------------
+// Google OAuth (Butterbase managed flow)
+//
+// beginGoogleSignIn stores the post-login destination and sends the browser
+// to GET /auth/{app_id}/oauth/google?redirect_to=<auth-callback.html>.
+// Butterbase runs the Google round-trip and bounces the browser back with
+// access_token/refresh_token appended as query parameters; auth-callback.html
+// then hands them to applyOAuthRedirect, which stores the session and loads
+// the profile via /auth/me.// ---------------------------------------------------------------------------
+
+/** Send the browser to Google sign-in. `nextPath` is restored after the
+ *  round-trip by consumeOAuthNext(); invalid destinations fall back to the
+ *  account page exactly like the other auth flows. */
+export function beginGoogleSignIn(nextPath) {
+  try {
+    sessionStorage.setItem("olivistart_oauth_next", resolveOAuthNext(nextPath));
+  } catch { /* private mode - consumeOAuthNext falls back on its own */ }
+  window.location.assign(googleOAuthUrl(AUTH_BASE, SITE_URL));
+}
+
+/** Post-login destination saved by beginGoogleSignIn (site-relative path). */
+export function consumeOAuthNext() {
+  try {
+    const next = sessionStorage.getItem("olivistart_oauth_next");
+    sessionStorage.removeItem("olivistart_oauth_next");
+    return resolveOAuthNext(next);
+  } catch {
+    return "account.html";
+  }
+}
+
+/**
+ * Finish a Butterbase OAuth callback: persist the tokens handed back on the
+ * callback URL, then load the profile they belong to (the OAuth redirect
+ * carries tokens only, never the user object). Returns the user, or null
+ * when `search` carries no OAuth parameters. Throws with user-facing copy so
+ * auth-callback.html can render failures directly.
+ */
+export async function applyOAuthRedirect(search) {
+  const parsed = oauthCallbackParams(search);
+  if (!parsed) return null;
+  if (parsed.error) throw new Error(oauthErrorMessage(parsed));
+
+  localStorage.setItem(TOKEN_KEY, parsed.accessToken);
+  localStorage.setItem(REFRESH_KEY, parsed.refreshToken);
+  try {
+    const res = await fetchWithTimeout(`${AUTH_BASE}/me`, {
+      headers: { Authorization: `Bearer ${parsed.accessToken}` },
+    });
+    if (!res.ok) throw new Error(`/me failed: ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    const user = data.user || data;
+    if (!user || !user.email) throw new Error("profile response missing email");
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    return user;
+  } catch {
+    // A session we cannot identify must not linger half-initialized - clear
+    // the tokens back out before surfacing the failure.
+    clearStoredAuth();
+    throw new Error("Google sign-in could not be completed. Please try again.");
+  }
 }

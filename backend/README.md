@@ -125,6 +125,49 @@ ClassManager additionally soft-deletes (restorable) students; that needs an
 `archived_at` column plus filtered reads everywhere, so it is a possible
 follow-up rather than part of this action.
 
+## Google sign-in
+
+End users can sign up and log in with Google through Butterbase's managed
+OAuth flow. Password and magic-link sign-in keep working unchanged.
+
+- **Provider registration.** Create a Google Cloud OAuth client (type
+  "Web application") with authorized redirect URI
+  `https://api.butterbase.ai/auth/app_0otd4vmczvu8/oauth/google/callback`,
+  then register it (the service key authorizes the call; the frontend list
+  mirrors the platform callback plus the static-site landing page):
+
+  ```
+  POST /v1/app_0otd4vmczvu8/auth/oauth-config
+  Authorization: Bearer $BUTTERBASE_API_KEY
+  {
+    "provider": "google",
+    "client_id": "\u2026apps.googleusercontent.com",
+    "client_secret": "\u2026",
+    "redirect_uris": [
+      "https://api.butterbase.ai/auth/app_0otd4vmczvu8/oauth/google/callback",
+      "https://olivistart.com/auth-callback.html"
+    ]
+  }
+  ```
+
+  `GET /v1/{app_id}/auth/oauth-config` lists registered providers.
+
+- **Frontend flow.** The login/signup pages call `beginGoogleSignIn(next)`
+  (js/auth.js), which saves the destination and sends the browser to
+  `/auth/{app_id}/oauth/google?redirect_to=https://olivistart.com/auth-callback.html`.
+  Butterbase redirects back with `?access_token=\u2026&refresh_token=\u2026`;
+  js/auth-callback.js stores the session under the same localStorage keys as
+  password/magic-link login, claims enrollments, and continues to the saved
+  destination. Tokens ride in the callback URL by platform design; the page
+  leaves it with `location.replace` so they do not linger in back/forward.
+
+- **Account linking.** A Google sign-in whose email already owns an account
+  (magic-link, password, or guest-checkout) is expected to land in that same
+  account. Verify after enabling: sign in both ways with one address and
+  confirm the enrollment/claim paths (keyed on verified email) still resolve
+  to one profile. Admin access keeps working by email allowlist - a Google
+  login with an allowlisted address gets the CMS.
+
 ## Checkout flows
 
 - Logged-in: `enroll-guard` (auth required) creates a pending enrollment for

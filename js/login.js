@@ -1,7 +1,7 @@
 // Login page logic - password or magic-link code. After any successful
 // login, unclaimed enrollments matching the verified email attach to the
 // account (guest-checkout recovery path).
-import { login, isLoggedIn, sendMagicLink, verifyMagicLink, claimEnrollments } from "./auth.js";
+import { login, isLoggedIn, sendMagicLink, verifyMagicLink, claimEnrollments, beginGoogleSignIn } from "./auth.js";
 import { getQueryParam, SITE_URL } from "./api.js";
 import { canonicalSiteUrl, getInitialLoginState, getLoginFocusTarget } from "./login-flow.js";
 
@@ -112,4 +112,10 @@ form.addEventListener("submit", async (e) => {
       submitBtn.textContent = mode === "magic-verify" ? "Verify & Log In" : label;
     }
   }
+});
+
+// Google sign-in uses Butterbase's managed OAuth flow; auth-callback.html
+// restores the destination saved here after the Google round-trip.
+document.getElementById("google-signin").addEventListener("click", () => {
+  beginGoogleSignIn(getQueryParam("next"));
 });
