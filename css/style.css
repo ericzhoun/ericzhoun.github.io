@@ -3123,3 +3123,8 @@ textarea {
 .roster-menu-items button:hover { background: #f2f4f3; }
 .roster-avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: #e3e7e6; color: var(--color-text); font-size: 11px; font-weight: 600; margin-right: 6px; vertical-align: middle; }
 .roster-sort { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; cursor: pointer; color: inherit; text-transform: none; }
+
+/* Admin weekly calendar */
+.calendar-card { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--color-border); border-radius: var(--radius); padding: 8px; font: inherit; cursor: pointer; }
+.calendar-card:hover { filter: brightness(0.97); }
+.calendar-card-time, .calendar-card-meta { font-size: 12px; color: var(--color-text-muted); }

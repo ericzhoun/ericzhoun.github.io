@@ -11,7 +11,7 @@ import { createLatestEventListener } from "./admin-account-view-listener.js";
 import { getToken, getUser, isAdmin, logout, refreshToken } from "./auth.js";
 
 const nav = [
-  ["dashboard", "Dashboard"], ["programs", "Programs"], ["semesters", "Semesters"],
+  ["dashboard", "Dashboard"], ["calendar", "Calendar"], ["programs", "Programs"], ["semesters", "Semesters"],
   ["schedules", "Schedules"], ["sessions", "Sessions"], ["enrollments", "Enrollments"],
   ["payments", "Payments"],
   ["students", "Students"], ["accounts", "Accounts"],
@@ -1604,5 +1604,151 @@ async function broadcast() {
   });
 }
 
-async function render() { accountViewClick.clear(); if (!guard()) return; renderNav(); try { const id = query(); if (id === "dashboard") await dashboard(); else if (configs[id]) await crud(id); else if (id === "enrollments") await enrollments(); else if (id === "payments") await payments(); else if (id === "students") await students(); else if (id === "sessions") await sessions(); else if (id === "accounts") await accounts(); else if (id === "broadcast") await broadcast(); else app.innerHTML = `<h1>${id[0].toUpperCase() + id.slice(1)}</h1><p class="muted">Section unavailable.</p>`; renderNotification(); } catch (err) { app.innerHTML = `<p class="auth-error">${esc(err.message)}</p>`; } }
+// Zenamu-style weekly calendar hub: sessions placed on a Mon-Sun grid,
+// color coded per program, with a list toggle and click-through to the
+// attendance sheet. Week/view state persists like the roster's search.
+const calendarState = { weekStart: null, view: "calendar", hideCancelled: false };
+const CALENDAR_COLORS = [
+  { bg: "#fdeaea", text: "#8c2f2f" },
+  { bg: "#fdeedd", text: "#8a5a1d" },
+  { bg: "#e9f3e2", text: "#4c6b2f" },
+  { bg: "#e5eef8", text: "#2f5a8c" },
+  { bg: "#f1e8f7", text: "#6b3f8c" },
+  { bg: "#e2f2f1", text: "#23695f" },
+  { bg: "#fbe9f1", text: "#8c2f5a" },
+  { bg: "#efeeec", text: "#5a5a5a" },
+];
+
+function mondayOf(date) {
+  const monday = new Date(date);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((date.getDay() + 6) % 7));
+  return monday;
+}
+
+const toISODate = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+
+async function calendar() {
+  const [sessions, schedules, programs] = await Promise.all([
+    adminData.read("class_sessions", { order: [{ field: "class_date", direction: "asc" }], limit: 200 }),
+    adminData.read("class_schedules", { select: ["id", "program_id", "day_of_week", "start_time", "age_group", "max_seats"] }),
+    adminData.read("programs", { select: ["id", "name"] }),
+  ]);
+  const sessionIds = sessions.map((session) => session.id).filter(Boolean);
+  const bookingRows = sessionIds.length ? await adminData.read("bookings", {
+    select: ["session_id", "status"],
+    filters: [{ field: "session_id", operator: "in", value: sessionIds }],
+  }) : [];
+  const bookedBySession = new Map();
+  bookingRows.forEach((booking) => {
+    if (booking.status === "cancelled") return;
+    bookedBySession.set(booking.session_id, (bookedBySession.get(booking.session_id) || 0) + 1);
+  });
+  const scheduleById = new Map(schedules.map((schedule) => [schedule.id, schedule]));
+  const programById = new Map(programs.map((program) => [program.id, program]));
+  const colorByProgram = new Map();
+  programs.forEach((program, index) => colorByProgram.set(program.id, CALENDAR_COLORS[index % CALENDAR_COLORS.length]));
+
+  if (!calendarState.weekStart) calendarState.weekStart = mondayOf(new Date());
+  const weekDays = Array.from({ length: 7 }, (_, offset) => {
+    const day = new Date(calendarState.weekStart);
+    day.setDate(day.getDate() + offset);
+    return day;
+  });
+  const weekLabel = `${weekDays[0].toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${weekDays[6].toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+  const todayISO = toISODate(new Date());
+
+  const visible = () => sessions.filter((session) => {
+    const day = (session.class_date || "").slice(0, 10);
+    const inWeek = weekDays.some((d) => toISODate(d) === day);
+    return inWeek && (!calendarState.hideCancelled || session.status !== "cancelled");
+  });
+
+  const sessionCard = (session) => {
+    const schedule = scheduleById.get(session.schedule_id);
+    const program = schedule ? programById.get(schedule.program_id) : null;
+    const color = (program && colorByProgram.get(program.id)) || CALENDAR_COLORS[CALENDAR_COLORS.length - 1];
+    const seats = schedule && schedule.max_seats != null ? schedule.max_seats : null;
+    const booked = bookedBySession.get(session.id) || 0;
+    const cancelled = session.status === "cancelled";
+    return `<button type="button" class="calendar-card" data-action="attendance:${esc(session.id)}" style="background:${color.bg};border-left:3px solid ${color.text};text-align:left;width:100%;">
+      <b style="color:${color.text};">${esc(program ? program.name : "Session")}</b>
+      <span class="calendar-card-time">${esc(schedule ? formatTime(schedule.start_time) : "")}</span>
+      <span class="calendar-card-meta">${seats != null ? `${booked}/${seats} booked` : `${booked} booked`}${cancelled ? ' · <span class="status-badge status-cancelled">Cancelled</span>' : ""}</span>
+    </button>`;
+  };
+
+  const renderWeek = () => {
+    const rows = visible();
+    const slot = document.querySelector("#calendar-slot");
+    if (calendarState.view === "calendar") {
+      slot.innerHTML = `<div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;">
+        ${weekDays.map((day) => {
+          const iso = toISODate(day);
+          const daySessions = rows.filter((session) => (session.class_date || "").slice(0, 10) === iso);
+          const isToday = iso === todayISO;
+          return `<div style="border:1px solid var(--color-border);min-height:150px;">
+            <div style="padding:6px 8px;border-bottom:1px solid var(--color-border);${isToday ? "background:#eef4f2;font-weight:600;" : ""}">${day.toLocaleDateString(undefined, { weekday: "short" })} ${day.getDate()}</div>
+            <div style="padding:6px;display:flex;flex-direction:column;gap:6px;">${daySessions.map(sessionCard).join("") || '<span class="muted" style="font-size:12px;">No classes</span>'}</div>
+          </div>`;
+        }).join("")}
+      </div>`;
+      return;
+    }
+    const listRows = rows.map((session) => {
+      const schedule = scheduleById.get(session.schedule_id);
+      const program = schedule ? programById.get(schedule.program_id) : null;
+      const seats = schedule && schedule.max_seats != null ? schedule.max_seats : "";
+      const booked = bookedBySession.get(session.id) || 0;
+      const status = session.status === "cancelled"
+        ? '<span class="status-badge status-cancelled">Cancelled</span>'
+        : `<span class="status-badge status-confirmed">Scheduled</span>`;
+      return `<tr><td>${date(session.class_date)}</td><td>${esc(schedule ? formatTime(schedule.start_time) : "-")}</td><td>${esc(program ? program.name : "-")}</td><td>${esc(schedule ? schedule.age_group : "-")}</td><td>${booked}${seats ? ` / ${seats}` : ""}</td><td>${status}</td><td>${button("Attendance", `attendance:${esc(session.id)}`)}</td></tr>`;
+    }).join("");
+    slot.innerHTML = `${table(["Date", "Time", "Program", "Age group", "Booked", "Status", "Actions"], listRows)}`;
+  };
+
+  app.innerHTML = `<div class="admin-crud-header"><h1>Calendar</h1>
+      <div class="admin-header-actions">${button("Calendar", "view-calendar", calendarState.view === "calendar" ? "btn btn-sm" : "btn btn-sm btn-secondary")}${button("List", "view-list", calendarState.view === "list" ? "btn btn-sm" : "btn btn-sm btn-secondary")}${button("Export CSV", "export-calendar-csv", "btn btn-sm btn-secondary")}</div></div>
+    <div class="admin-crud-header" style="border-bottom:0;">
+      <div>${button("Prev week", "week-prev", "btn btn-sm btn-secondary")} ${button("This week", "week-this", "btn btn-sm btn-secondary")} ${button("Next week", "week-next", "btn btn-sm btn-secondary")}<b style="margin-left:12px;">${esc(weekLabel)}</b></div>
+      <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="calendar-hide-cancelled" ${calendarState.hideCancelled ? "checked" : ""}> Hide cancelled</label>
+    </div>
+    <div id="calendar-slot"></div>`;
+  renderWeek();
+
+  app.addEventListener("input", (event) => {
+    if (event.target.id !== "calendar-hide-cancelled") return;
+    calendarState.hideCancelled = event.target.checked;
+    renderWeek();
+  });
+
+  accountViewClick.listen(app, "click", async (event) => {
+    const action = event.target.dataset.action || "";
+    if (action === "week-prev") { calendarState.weekStart.setDate(calendarState.weekStart.getDate() - 7); renderWeek(); return; }
+    if (action === "week-next") { calendarState.weekStart.setDate(calendarState.weekStart.getDate() + 7); renderWeek(); return; }
+    if (action === "week-this") { calendarState.weekStart = mondayOf(new Date()); renderWeek(); return; }
+    if (action === "view-calendar") { calendarState.view = "calendar"; render(); return; }
+    if (action === "view-list") { calendarState.view = "list"; render(); return; }
+    if (action === "export-calendar-csv") {
+      const scheduleByIdLocal = scheduleById;
+      const csvRows = visible().map((session) => {
+        const schedule = scheduleByIdLocal.get(session.schedule_id);
+        const program = schedule ? programById.get(schedule.program_id) : null;
+        const seats = schedule && schedule.max_seats != null ? schedule.max_seats : "";
+        return [session.class_date ?? "", schedule ? schedule.start_time : "", program ? program.name : "", schedule ? schedule.age_group : "", bookedBySession.get(session.id) || 0, seats, session.status];
+      });
+      const blob = new Blob([csvLines(["Date", "Time", "Program", "Age group", "Booked", "Seats", "Status"], csvRows)], { type: "text/csv" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `olivista-schedule-${toISODate(weekDays[0])}.csv`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+      return;
+    }
+    if (action.startsWith("attendance:")) await attendance(action.slice("attendance:".length));
+  });
+}
+
+async function render() { accountViewClick.clear(); if (!guard()) return; renderNav(); try { const id = query(); if (id === "dashboard") await dashboard(); else if (id === "calendar") await calendar(); else if (configs[id]) await crud(id); else if (id === "enrollments") await enrollments(); else if (id === "payments") await payments(); else if (id === "students") await students(); else if (id === "sessions") await sessions(); else if (id === "accounts") await accounts(); else if (id === "broadcast") await broadcast(); else app.innerHTML = `<h1>${id[0].toUpperCase() + id.slice(1)}</h1><p class="muted">Section unavailable.</p>`; renderNotification(); } catch (err) { app.innerHTML = `<p class="auth-error">${esc(err.message)}</p>`; } }
 window.addEventListener("hashchange", render); document.querySelector("#admin-logout").addEventListener("click", async () => { await logout(); location.href = "index.html"; }); render();
