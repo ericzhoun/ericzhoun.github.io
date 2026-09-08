@@ -67,14 +67,82 @@ function form(fields, values = {}, title = "Edit record") {
   return `<form id="record-form" class="admin-form"><h3>${title}</h3><p class="auth-error" id="form-error" hidden></p>${fields.map(field).join("")}<div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button><button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
 }
 
+// Zenamu-style overview: finance from recorded order totals, operations from
+// the session calendar, and a needs-attention list computed from live data.
+// Occupancy counts bookings with scheduled/attended status; sessions with no
+// recorded bookings would understate occupancy, so the attention list is
+// labeled "recorded bookings" rather than a hard attendance number.
 async function dashboard() {
-  const [programs, schedules, enrollments] = await Promise.all([
-    adminData.read("programs", { select: ["id"] }),
-    adminData.read("class_schedules", { select: ["id"] }),
-    adminData.read("enrollments", { select: ["id"] }),
+  const [programs, schedules, enrollments, sessions, bookings, students, accountsResult] = await Promise.all([
+    adminData.read("programs", { select: ["id", "name"] }),
+    adminData.read("class_schedules", { select: ["id", "program_id", "max_seats"] }),
+    adminData.read("enrollments", { select: ["id", "status", "total_paid_cents", "student_email", "created_at"] }),
+    adminData.read("class_sessions", { order: [{ field: "class_date", direction: "asc" }] }),
+    adminData.read("bookings", { select: ["id", "session_id", "status"] }),
+    adminData.read("students", { select: ["id"] }),
+    adminFn("list-accounts"),
   ]);
-  app.innerHTML = `<h1>Dashboard</h1><div class="stat-grid">${[[programs.length,"Programs","programs"],[schedules.length,"Class Schedules","schedules"],[enrollments.length,"Enrollments","enrollments"]].map(([n,l,id]) => `<a href="#${id}" class="stat-card"><span class="stat-number">${n}</span><span class="stat-label">${l}</span></a>`).join("")}</div><section class="dashboard-quick-links"><h2>Quick Actions</h2><div class="quick-link-grid"><a class="quick-link" href="#schedules"><h3>Manage Schedules →</h3><p>Add class times, prices, and capacity.</p></a><a class="quick-link" href="#programs"><h3>Manage Programs →</h3><p>Create or update art program types.</p></a><a class="quick-link" href="#enrollments"><h3>View Enrollments →</h3><p>Review students and payment status.</p></a></div></section>`;
+  const accountCount = accountsResult.accounts.length;
+  const scheduleById = new Map(schedules.map((schedule) => [schedule.id, schedule]));
+  const programById = new Map(programs.map((program) => [program.id, program]));
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today); horizon.setDate(horizon.getDate() + 14);
+  const upcomingSessions = sessions.filter((session) => session.status !== "cancelled" && session.class_date && new Date(session.class_date) >= today);
+  const heldSessions = sessions.filter((session) => session.status !== "cancelled" && session.class_date && new Date(session.class_date) < today);
+
+  const activeBookingsBySession = new Map();
+  bookings.forEach((booking) => {
+    if (!["scheduled", "attended"].includes(booking.status)) return;
+    activeBookingsBySession.set(booking.session_id, (activeBookingsBySession.get(booking.session_id) || 0) + 1);
+  });
+
+  const money = (cents) => `$${((cents || 0) / 100).toFixed(2)}`;
+  const revenue = enrollments.filter((e) => e.status === "confirmed").reduce((total, e) => total + (e.total_paid_cents ?? 0), 0);
+  const revenueThisMonth = enrollments.filter((e) => {
+    if (e.status !== "confirmed" || !e.created_at) return false;
+    const created = new Date(e.created_at);
+    return created.getFullYear() === today.getFullYear() && created.getMonth() === today.getMonth();
+  }).reduce((total, e) => total + (e.total_paid_cents ?? 0), 0);
+  const pendingValue = enrollments.filter((e) => e.status === "pending").reduce((total, e) => total + (e.total_paid_cents ?? 0), 0);
+
+  const attention = upcomingSessions
+    .filter((session) => new Date(session.class_date) <= horizon)
+    .map((session) => {
+      const schedule = scheduleById.get(session.schedule_id);
+      const program = schedule ? programById.get(schedule.program_id) : null;
+      const seats = schedule && schedule.max_seats != null ? schedule.max_seats : 0;
+      const booked = activeBookingsBySession.get(session.id) || 0;
+      return { label: `${program ? program.name + " - " : ""}${session.class_date}`, booked, seats };
+    })
+    .filter((row) => row.seats > 0 && row.booked / row.seats < 0.5)
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .slice(0, 5);
+  const attentionRows = attention.map((row) =>
+    `<tr><td>${esc(row.label)}</td><td>${row.booked} of ${row.seats} seats (recorded bookings)</td><td><a href="#sessions">Open sessions</a></td></tr>`).join("");
+
+  app.innerHTML = `<h1>Dashboard</h1>
+    <h2>Finance</h2>
+    <div class="stat-grid">
+      <span class="stat-card"><span class="stat-number">${money(revenue)}</span><span class="stat-label">Revenue to date</span></span>
+      <span class="stat-card"><span class="stat-number">${money(revenueThisMonth)}</span><span class="stat-label">Billed this month</span></span>
+      <a href="#payments" class="stat-card"><span class="stat-number">${money(pendingValue)}</span><span class="stat-label">Pending payments</span></a>
+    </div>
+    <h2>Operations</h2>
+    <div class="stat-grid">
+      <a href="#sessions" class="stat-card"><span class="stat-number">${upcomingSessions.length}</span><span class="stat-label">Upcoming sessions (14 days)</span></a>
+      <span class="stat-card"><span class="stat-number">${heldSessions.length}</span><span class="stat-label">Sessions held</span></span>
+      <a href="#students" class="stat-card"><span class="stat-number">${students.length}</span><span class="stat-label">Students</span></a>
+    </div>
+    <section class="dashboard-attention">
+      <h2>Needs attention</h2>
+      ${heldSessions.length && attention.length === 0 ? `<p class="muted">Nothing needs attention right now.</p>` : ""}
+      ${attention.length === 0 && heldSessions.length === 0 ? `<p class="muted">Nothing needs attention right now.</p>` : ""}
+      ${attention.length ? table(["Upcoming session (next 14 days)", "Recorded bookings", ""], attentionRows) : ""}
+    </section>
+    <section class="dashboard-quick-links"><h2>Quick Actions</h2><div class="quick-link-grid"><a class="quick-link" href="#schedules"><h3>Manage Schedules</h3><p>Add class times, prices, and capacity.</p></a><a class="quick-link" href="#programs"><h3>Manage Programs</h3><p>Create or update art program types.</p></a><a class="quick-link" href="#enrollments"><h3>View Enrollments</h3><p>Review students and payment status.</p></a><a class="quick-link" href="#payments"><h3>Payments</h3><p>Billed amounts, pending value, CSV export.</p></a><a class="quick-link" href="#broadcast"><h3>Broadcast</h3><p>Announce updates to families by email.</p></a></div></section>`;
 }
+
 const configs = {
   programs: { title: "Programs", resource: "programs", query: { order: [{ field: "sort_order", direction: "asc" }] }, fields: [], cols: ["name","program_type","num_classes","active"], labels: ["Name","Type","Classes","Active"] },
   semesters: { title: "Semesters", resource: "semesters", query: { order: [{ field: "start_date", direction: "desc" }] }, fields: [["name","Name"],["start_date","Start Date","date"],["end_date","End Date","date"]], cols: ["name","start_date","end_date","active"], labels: ["Name","Start","End","Active"] },
