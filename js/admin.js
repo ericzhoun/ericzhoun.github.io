@@ -551,7 +551,7 @@ async function students() {
         <td>${menu}</td></tr>`;
     }).join("");
     const sortArrow = (field) => (rosterState.sort.field === field ? (rosterState.sort.dir === "asc" ? " up" : " down") : "");
-    const headers = ["<input type=\"checkbox\" id=\"roster-select-all\" aria-label=\"Select all rows\">",
+    const headers = ['<input type="checkbox" id="roster-select-all" aria-label="Select all rows">',
       ...ROSTER_COLUMNS.map((column) => column.sortable
         ? `<button type="button" class="roster-sort" data-action="sort:${column.field}">${column.label}${sortArrow(column.field)}</button>`
         : column.label),
