@@ -441,6 +441,112 @@ test("update-student returns 404 when the row does not exist", async () => {
   assert.equal(res.status, 404);
 });
 
+test("update-student saves family contact fields to the parent profile", async () => {
+  const res = await callHandler(
+    request({
+      action: "update-student", id: "stu-1", name: "Mia", dob: "2016-05-01",
+      parent_name: "Pat Parent", student_phone: "555-0100",
+      emergency_contact: "Grandma 555-0199", allergies: "peanuts",
+    }),
+    {
+      respond: (url, call) => {
+        if (call.method === "PATCH" && url.includes("/students/stu-1")) {
+          return { body: { id: "stu-1", user_id: "parent-7", name: "Mia" } };
+        }
+        if (call.method === "PATCH" && url.includes("/parent_profiles/parent-7")) {
+          return { body: { user_id: "parent-7", parent_name: "Pat Parent", student_phone: "555-0100", emergency_contact: "Grandma 555-0199", allergies: "peanuts" } };
+        }
+        return { body: [] };
+      },
+    },
+  );
+  assert.equal(res.status, 200);
+  const patch = dataCalls(res).find((call) => call.method === "PATCH" && call.url.includes("/parent_profiles/parent-7"));
+  assert.ok(patch, "expected a parent_profiles PATCH");
+  assert.equal(patch.body.parent_name, "Pat Parent");
+  assert.equal(patch.body.student_phone, "555-0100");
+  assert.equal(patch.body.emergency_contact, "Grandma 555-0199");
+  assert.equal(patch.body.allergies, "peanuts");
+  assert.equal(patch.body.email, undefined); // sign-in identity is never touched
+  const body = await res.json();
+  assert.equal(body.student.id, "stu-1");
+  assert.equal(body.family.user_id, "parent-7");
+});
+
+test("update-student refuses to change the sign-in email of an account student", async () => {
+  const res = await callHandler(
+    request({ action: "update-student", id: "stu-1", dob: "2016-05-01", email: "new@example.com" }),
+    { respond: (url, call) => (call.method === "PATCH" && url.includes("/students/stu-1") ? { body: { id: "stu-1", user_id: "parent-7" } } : { body: [] }) },
+  );
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /sign-in identity/);
+});
+
+test("update-student saves family fields to the pending family record, email included", async () => {
+  const res = await callHandler(
+    request({ action: "update-student", id: "stu-1", student_phone: "555-0100", email: "family@example.com" }),
+    {
+      respond: (url, call) => {
+        if (url.includes("students?")) return { body: [{ id: "stu-1", user_id: null, pending_parent_id: "pend-1" }] };
+        if (url.includes("parent_profiles?email=eq.")) return { body: [] };
+        if (call.method === "PATCH" && url.includes("/pending_parents/pend-1")) {
+          return { body: { id: "pend-1", student_phone: "555-0100", email: "family@example.com" } };
+        }
+        return { body: [] };
+      },
+    },
+  );
+  assert.equal(res.status, 200);
+  const patch = dataCalls(res).find((call) => call.method === "PATCH" && call.url.includes("/pending_parents/pend-1"));
+  assert.ok(patch, "expected a pending_parents PATCH");
+  assert.equal(patch.body.student_phone, "555-0100");
+  assert.equal(patch.body.email, "family@example.com");
+  const body = await res.json();
+  assert.equal(body.family.id, "pend-1");
+});
+
+test("update-student rejects a pending-family email that collides with an account", async () => {
+  const res = await callHandler(
+    request({ action: "update-student", id: "stu-1", email: "taken@example.com" }),
+    {
+      respond: (url) => {
+        if (url.includes("students?")) return { body: [{ id: "stu-1", user_id: null, pending_parent_id: "pend-1" }] };
+        if (url.includes("parent_profiles?email=eq.")) return { body: [{ user_id: "parent-9", parent_name: "Someone" }] };
+        return { body: [] };
+      },
+    },
+  );
+  assert.equal(res.status, 409);
+  assert.equal((await res.json()).code, "ACCOUNT_EXISTS");
+});
+
+test("update-student explains the missing family record for standalone students", async () => {
+  const res = await callHandler(
+    request({ action: "update-student", id: "stu-1", student_phone: "555-0100" }),
+    { respond: (url) => (url.includes("students?") ? { body: [{ id: "stu-1", user_id: null, pending_parent_id: null }] } : { body: [] }) },
+  );
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /no family record/);
+});
+
+test("update-student can save notes without resending the date of birth", async () => {
+  const res = await callHandler(
+    request({ action: "update-student", id: "stu-1", notes: "likes watercolor" }),
+    { respond: (url, call) => (call.method === "PATCH" && url.includes("/students/stu-1") ? { body: { id: "stu-1", notes: "likes watercolor" } } : { body: [] }) },
+  );
+  assert.equal(res.status, 200);
+  const patch = dataCalls(res).find((call) => call.method === "PATCH");
+  assert.equal(patch.body.notes, "likes watercolor");
+  assert.equal(patch.body.dob, undefined);
+  assert.equal(patch.body.age, undefined);
+});
+
+test("update-student rejects unknown fields", async () => {
+  const res = await callHandler(request({ action: "update-student", id: "stu-1", bogus: "x" }));
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /Field is not allowed/);
+});
+
 // ---- enrollments ----
 
 test("create-enrollment writes a comped, confirmed row priced from the schedule", async () => {
@@ -783,25 +889,30 @@ test("list-accounts aggregates parents across students and enrollments", async (
   const { accounts } = await res.json();
   const byId = Object.fromEntries(accounts.map((a) => [a.user_id, a]));
 
-  // p1 has both students and enrollments
+  // p1 has both students and enrollments. The contact columns now ride along
+  // from parent_profiles so the student editor can prefill family fields.
   assert.deepEqual(byId.p1, {
     kind: "account", user_id: "p1", pending_parent_id: null,
     email: "profile@e.com", name: "Profile Alice", student_count: 2, enrollment_count: 2,
+    student_phone: null, emergency_contact: null, allergies: null,
   });
   // p2 has only students - still listed, with no email or name to show
   assert.deepEqual(byId.p2, {
     kind: "account", user_id: "p2", pending_parent_id: null,
     email: null, name: null, student_count: 1, enrollment_count: 0,
+    student_phone: null, emergency_contact: null, allergies: null,
   });
   // p3 has only enrollments
   assert.deepEqual(byId.p3, {
     kind: "account", user_id: "p3", pending_parent_id: null,
     email: "c@e.com", name: "Cara", student_count: 0, enrollment_count: 1,
+    student_phone: null, emergency_contact: null, allergies: null,
   });
   // p4 has an account profile but has not added students or enrolled yet.
   assert.deepEqual(byId.p4, {
     kind: "account", user_id: "p4", pending_parent_id: null,
     email: "fresh@e.com", name: "Fresh Parent", student_count: 0, enrollment_count: 0,
+    student_phone: null, emergency_contact: null, allergies: null,
   });
 });
 

@@ -112,6 +112,22 @@ non-cancelled enrollment in that program, falling back to the enrollment's
 recipients; individual failures are reported per address and never abort the
 remaining deliveries.
 
+### Student profile editing
+
+`update-student` now covers the full profile: name, dob (age re-derived), and
+notes save to the students row, while the family contact fields
+(`parent_name`, `student_phone`, `emergency_contact`, `allergies`) save to the
+student's family record - `parent_profiles` for account students,
+`pending_parents` for placeholders - since contact data is family-level and
+shared by all students of that family. Email is only editable while the
+family is still a pending placeholder (same conflict check as
+`update-pending-parent`); on a real account it is the sign-in identity and is
+rejected, the same rule `update-account` enforces. Standalone students (no
+family record) reject contact-field updates with an explanation. The response
+returns `{ student, family }`. `list-accounts` carries the parent-profile
+contact columns so the admin editors can prefill; writes stay behind the
+dedicated actions.
+
 ### Student deletion
 
 `delete-students` permanently removes roster students by id (max 100 per

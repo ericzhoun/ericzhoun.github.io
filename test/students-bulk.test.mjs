@@ -30,7 +30,9 @@ test("roster rows expose a three-dot menu with profile and edit actions", async 
   const script = await readAdmin();
   assert.match(script, /View profile/);
   assert.match(script, /data-action="edit-student:\$\{esc\(row\.id\)\}"/);
-  assert.match(script, /adminFn\("update-student", \{ id: student\.id/);
+  // The row menu opens the same shared full-profile editor as the detail page.
+  assert.match(script, /openStudentEditForm\(student, \{ onSaved: \(\) => students\(\) \}\)/);
+  assert.match(script, /adminFn\("update-student", payload\)/);
 });
 
 test("roster supports client-side search and column sorting", async () => {

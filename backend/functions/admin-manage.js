@@ -1127,21 +1127,82 @@ async function addStudent(ctx, body) {
 
 // Updates any student, since this is admin-only.
 async function updateStudent(ctx, body) {
+  // Student fields save to the students row; family contact fields save to
+  // the family record (parent profile for account students, pending family
+  // for placeholders) because contact data is family-level and shared by all
+  // students of the same family. Email is only editable while the family is
+  // still a pending placeholder: on a real account it is the sign-in
+  // identity, the same rule update-account enforces.
+  assertOnlyKeys(body, ["action", "id", "name", "dob", "notes", ...PENDING_FIELDS, "email"]);
   const id = str(body.id);
-  const name = str(body.name);
-  const dob = str(body.dob);
   if (!id) return json({ error: "Student id is required" }, 400);
-  const age = calculateStudentAge(dob);
-  if (age == null) return json({ error: "A valid date of birth is required" }, 400);
 
-  const fields = { age: String(age), dob };
+  const fields = {};
+  const dob = str(body.dob);
+  if (dob !== null) {
+    const age = calculateStudentAge(dob);
+    if (age == null) return json({ error: "A valid date of birth is required" }, 400);
+    fields.age = String(age);
+    fields.dob = dob;
+  }
+  const name = str(body.name);
   if (name !== null) fields.name = name;
   if (body.notes !== undefined) fields.notes = str(body.notes);
 
-  const updated = await data(ctx, `students/${encodeURIComponent(id)}`, { method: "PATCH", body: fields });
-  const student = rows(updated)[0];
+  const familyFields = {};
+  for (const key of PENDING_FIELDS) {
+    if (body[key] !== undefined) familyFields[key] = str(body[key]);
+  }
+  const emailProvided = body.email !== undefined;
+  const touchesFamily = emailProvided || PENDING_FIELDS.some((key) => body[key] !== undefined);
+
+  if (Object.keys(fields).length === 0 && !touchesFamily) {
+    return json({ error: "No fields to update" }, 400);
+  }
+
+  let student;
+  if (Object.keys(fields).length > 0) {
+    const updated = await data(ctx, `students/${encodeURIComponent(id)}`, { method: "PATCH", body: fields });
+    student = rows(updated)[0];
+  } else {
+    student = rows(await data(ctx, `students?id=eq.${encodeURIComponent(id)}`))[0];
+  }
   if (!student) return json({ error: "Student not found" }, 404);
-  return json({ student }, 200);
+
+  let family = null;
+  if (touchesFamily) {
+    if (student.user_id) {
+      if (emailProvided) {
+        return json({ error: "This email is the parent account's sign-in identity and cannot be changed here. Create a new account to fix a wrong email." }, 400);
+      }
+      const patch = {};
+      for (const key of PENDING_FIELDS) {
+        if (familyFields[key] !== undefined) patch[key] = familyFields[key];
+      }
+      patch.updated_at = new Date().toISOString();
+      const updated = await data(ctx, `parent_profiles/${encodeURIComponent(student.user_id)}`, { method: "PATCH", body: patch });
+      family = rows(updated)[0] || null;
+    } else if (student.pending_parent_id) {
+      const patch = {};
+      for (const key of PENDING_FIELDS) {
+        if (familyFields[key] !== undefined) patch[key] = familyFields[key];
+      }
+      if (emailProvided) {
+        const email = normalizeEmail(body.email);
+        if (body.email && !email) return json({ error: "A valid email is required" }, 400);
+        const conflict = await assertEmailFree(ctx, email);
+        if (conflict) return conflict;
+        patch.email = email;
+      }
+      patch.updated_at = new Date().toISOString();
+      const updated = await data(ctx, `pending_parents/${encodeURIComponent(student.pending_parent_id)}`, { method: "PATCH", body: patch });
+      family = rows(updated)[0] || null;
+    } else {
+      return json({ error: "This student has no family record to store contact details. Link a parent account or pending family first." }, 400);
+    }
+  }
+
+  return json({ student, family }, 200);
 }
 
 // Grants a comped, already-confirmed enrollment. Price comes from the schedule
@@ -1258,7 +1319,9 @@ async function setCredits(ctx, body) {
 // remain the fallback for legacy accounts created before profiles existed.
 async function listAccounts(ctx) {
   const [profileRows, studentRows, enrollmentRows, pendingRows] = await Promise.all([
-    data(ctx, "parent_profiles?select=user_id,email,parent_name"),
+    // Contact columns ride along so the student editors can prefill the
+    // family contact fields; writes stay behind the dedicated actions.
+    data(ctx, "parent_profiles?select=user_id,email,parent_name,student_phone,emergency_contact,allergies"),
     data(ctx, "students?select=user_id,pending_parent_id"),
     // Newest rows carry the most recently saved contact information. Keep the
     // ordering explicit because the REST API does not guarantee row order.
@@ -1275,6 +1338,9 @@ async function listAccounts(ctx) {
         pending_parent_id: null,
         email: null,
         name: null,
+        student_phone: null,
+        emergency_contact: null,
+        allergies: null,
         student_count: 0,
         enrollment_count: 0,
       });
@@ -1287,6 +1353,9 @@ async function listAccounts(ctx) {
     const account = entry(row.user_id);
     account.email = str(row.email);
     account.name = str(row.parent_name);
+    account.student_phone = str(row.student_phone);
+    account.emergency_contact = str(row.emergency_contact);
+    account.allergies = str(row.allergies);
   }
   for (const row of rows(studentRows)) {
     if (!row.user_id) continue;

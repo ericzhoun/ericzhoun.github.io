@@ -553,13 +553,99 @@ function sortRosterRows(rows, sort) {
     String(a[sort.field] ?? "").localeCompare(String(b[sort.field] ?? ""), undefined, { numeric: true }) * dir);
 }
 
+// ---------------------------------------------------------------------------
+// Student profile editor
+//
+// One form for every editable student profile field, used by both the roster
+// row menu and the detail page. Student-owned fields (name, dob, notes) save
+// to the students row; contact fields (parent name, phone, emergency contact,
+// allergies) live on the family record - the parent profile for account
+// students, the pending family record for placeholders - and are shared by
+// every student of that family. Email is only editable while the family is
+// still a pending placeholder; on a real account it is the sign-in identity.
+// ---------------------------------------------------------------------------
+
+function studentFamilyFieldsHtml(account, pendingFamily) {
+  if (account) {
+    return `<div class="admin-form-section">
+      <h3>Family contact - ${esc(account.name || "Parent account")}</h3>
+      <p class="hint">Saved to the parent account profile and shared by all students in this family.</p>
+      <label>Email (sign-in identity)<input name="email" value="${esc(account.email || "")}" disabled>
+        <p class="hint">Fixed: this is how the parent signs in. Wrong email? Create a new account from the Accounts section.</p></label>
+      <label>Parent name<input name="parent_name" value="${esc(account.name || "")}"></label>
+      <label>Phone<input name="student_phone" value="${esc(account.student_phone || "")}"></label>
+      <label>Emergency contact<input name="emergency_contact" value="${esc(account.emergency_contact || "")}"></label>
+      <label>Allergies<textarea name="allergies">${esc(account.allergies || "")}</textarea></label></div>`;
+  }
+  if (pendingFamily) {
+    return `<div class="admin-form-section">
+      <h3>Family contact - ${esc(pendingFamily.parent_name || "Pending family")}</h3>
+      <p class="hint">Saved to the pending family record and shared by all students in this family.</p>
+      <label>Email<input name="email" type="email" value="${esc(pendingFamily.email || "")}"></label>
+      <label>Parent name<input name="parent_name" value="${esc(pendingFamily.parent_name || "")}"></label>
+      <label>Phone<input name="student_phone" value="${esc(pendingFamily.student_phone || "")}"></label>
+      <label>Emergency contact<input name="emergency_contact" value="${esc(pendingFamily.emergency_contact || "")}"></label>
+      <label>Allergies<textarea name="allergies">${esc(pendingFamily.allergies || "")}</textarea></label></div>`;
+  }
+  return `<p class="hint">Standalone student - no family record yet, so there are no contact details to edit. Link a parent account or pending family from the Accounts section to add them.</p>`;
+}
+
+function openStudentEditForm(student, { account, pendingFamily, onSaved } = {}) {
+  const familyAccount = account !== undefined ? account : (student.account || null);
+  const familyPending = pendingFamily !== undefined ? pendingFamily : (student.pendingFamily || null);
+  const hasFamily = Boolean(familyAccount || familyPending);
+  document.querySelector("#form-slot").innerHTML = `<form id="record-form" class="admin-form">
+    <h3>Edit ${esc(student.name)}</h3><p class="auth-error" id="form-error" hidden></p>
+    <label>Name<input name="name" required value="${esc(student.name)}"></label>
+    <label>Date of birth<input name="dob" type="date" required value="${esc((student.dob || "").slice(0, 10))}"></label>
+    <label>Notes<textarea name="notes">${esc(student.notes || "")}</textarea></label>
+    ${studentFamilyFieldsHtml(familyAccount, familyPending)}
+    <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button>
+    <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-student-edit">Cancel</button></div></form>`;
+  const formElement = document.querySelector("#record-form");
+  const errorElement = formElement.querySelector("#form-error");
+  formElement.querySelector('[data-action="cancel-student-edit"]').addEventListener("click", () => {
+    document.querySelector("#form-slot").innerHTML = "";
+  });
+  formElement.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const saveButton = formElement.querySelector("[data-save-button]");
+    saveButton.disabled = true; saveButton.textContent = "Saving."; errorElement.hidden = true;
+    const data = Object.fromEntries(new FormData(formElement));
+    const payload = { id: student.id, name: data.name, dob: data.dob, notes: data.notes };
+    if (hasFamily) {
+      for (const key of ["parent_name", "student_phone", "emergency_contact", "allergies"]) {
+        payload[key] = data[key] ?? "";
+      }
+      // Disabled inputs never reach FormData: account students carry no email
+      // key, pending families submit theirs (empty string clears it).
+      if (data.email !== undefined) payload.email = data.email;
+    }
+    try {
+      const result = await adminFn("update-student", payload);
+      Object.assign(student, result.student || {});
+      if (result.family) {
+        if (familyAccount) Object.assign(familyAccount, result.family);
+        if (familyPending) Object.assign(familyPending, result.family);
+      }
+      notify("Student updated.");
+      if (onSaved) await onSaved();
+    } catch (error) {
+      errorElement.textContent = error.message || "Could not save. Please try again.";
+      errorElement.hidden = false; saveButton.disabled = false; saveButton.textContent = "Save";
+    }
+  });
+}
+
 async function students() {
-  const [studentRows, enrollmentRows, { accounts }] = await Promise.all([
+  const [studentRows, enrollmentRows, { accounts }, pendingRows] = await Promise.all([
     adminData.read("students", { order: [{ field: "created_at", direction: "desc" }] }),
     adminData.read("enrollments", { order: [{ field: "created_at", direction: "desc" }] }),
     adminFn("list-accounts"),
+    adminData.read("pending_parents", {}),
   ]);
   const accountByUser = new Map(accounts.map((a) => [a.user_id, a]));
+  const pendingById = new Map(pendingRows.map((p) => [p.id, p]));
   const activeEnrollments = new Map();
   enrollmentRows.forEach((en) => {
     if (!en.student_id || en.status === "cancelled") return;
@@ -569,6 +655,8 @@ async function students() {
     const account = student.user_id ? accountByUser.get(student.user_id) : null;
     return {
       ...student,
+      account: account || null,
+      pendingFamily: (student.pending_parent_id && pendingById.get(student.pending_parent_id)) || null,
       parent: account ? (account.name || "Parent account") : "",
       parentEmail: account ? (account.email || "") : "",
       enrollments: activeEnrollments.get(student.id) || 0,
@@ -728,35 +816,13 @@ async function students() {
     if (student) await studentDetail(student);
   });
 
+  // The roster row menu opens the same full-profile editor as the detail
+  // page so every field is editable from either entry point.
   function renderEditStudentForm(student) {
-    document.querySelector("#form-slot").innerHTML = `<form id="record-form" class="admin-form">
-      <h3>Edit student</h3><p class="auth-error" id="form-error" hidden></p>
-      <label>Name<input name="name" required value="${esc(student.name)}"></label>
-      <label>Date of birth<input name="dob" type="date" required value="${esc(student.dob ?? "")}"></label>
-      <label>Notes<textarea name="notes">${esc(student.notes || "")}</textarea></label>
-      <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button>
-      <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-edit-student">Cancel</button></div></form>`;
-    const formElement = document.querySelector("#record-form");
-    const errorElement = formElement.querySelector("#form-error");
-    formElement.querySelector('[data-action="cancel-edit-student"]').addEventListener("click", () => { document.querySelector("#form-slot").innerHTML = ""; });
-    formElement.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const saveButton = formElement.querySelector("[data-save-button]");
-      saveButton.disabled = true; saveButton.textContent = "Saving."; errorElement.hidden = true;
-      const data = Object.fromEntries(new FormData(e.currentTarget));
-      try {
-        await adminFn("update-student", { id: student.id, name: data.name, dob: data.dob, notes: data.notes });
-        notify("Student updated.");
-        await students();
-      } catch (error) {
-        errorElement.textContent = error.message || "Could not save. Please try again.";
-        errorElement.hidden = false; saveButton.disabled = false; saveButton.textContent = "Save";
-      }
-    });
+    openStudentEditForm(student, { onSaved: () => students() });
   }
-}
 
-function renderAddStudentForm(accounts) {
+  function renderAddStudentForm(accounts) {
   const parentOptions = accounts.map((a) => `<option value="${esc(a.user_id)}">${esc(a.name || a.email || "Account")}${a.email ? ` (${esc(a.email)})` : ""}</option>`).join("");
   document.querySelector("#form-slot").innerHTML = `<form id="record-form" class="admin-form">
     <h3>Add student</h3><p class="auth-error" id="form-error" hidden></p>
@@ -838,7 +904,7 @@ async function studentDetail(student) {
     .filter((enrollment) => enrollment.status !== "cancelled")
     .reduce((total, enrollment) => total + Number(enrollment.num_classes_enrolled || 0), 0) - attendedCount;
   const phone = enrollmentRows.map((enrollment) => enrollment.student_phone).find((value) => value)
-    || (pendingFamily && pendingFamily.student_phone) || null;
+    || (account && account.student_phone) || (pendingFamily && pendingFamily.student_phone) || null;
   const email = (account && account.email)
     || (pendingFamily && pendingFamily.email)
     || enrollmentRows.map((enrollment) => enrollment.student_email).find((value) => value) || null;
@@ -890,8 +956,8 @@ async function studentDetail(student) {
         <tr><td>Phone</td><td>${esc(phone || "not set")}</td></tr>
         <tr><td>Email</td><td>${esc(email || "not set")}</td></tr>
         <tr><td>Parent</td><td>${esc(parentName || "not set")}</td></tr>
-        <tr><td>Emergency contact</td><td>${esc((pendingFamily && pendingFamily.emergency_contact) || "not set")}</td></tr>
-        <tr><td>Allergies</td><td>${esc((pendingFamily && pendingFamily.allergies) || "not set")}</td></tr>
+        <tr><td>Emergency contact</td><td>${esc((account && account.emergency_contact) || (pendingFamily && pendingFamily.emergency_contact) || "not set")}</td></tr>
+        <tr><td>Allergies</td><td>${esc((account && account.allergies) || (pendingFamily && pendingFamily.allergies) || "not set")}</td></tr>
         <tr><td>Registered</td><td>${date(student.created_at)}</td></tr>
         <tr><td>Notes</td><td>${esc(student.notes || "not set")}</td></tr>`)}</section>
     <section><div class="admin-crud-header"><h2>Enrollments &amp; Credits</h2>${scheduleOptions ? button("+ Comp enrollment", "add-enrollment-form") : ""}</div>
@@ -954,17 +1020,10 @@ async function studentDetail(student) {
       return;
     }
     if (action === "edit-student") {
-      slot().innerHTML = `<form id="record-form" class="admin-form">
-        <h3>Edit student</h3><p class="auth-error" id="form-error" hidden></p>
-        <label>Name<input name="name" required value="${esc(student.name)}"></label>
-        <label>Date of birth<input name="dob" type="date" required value="${esc((student.dob || "").slice(0, 10))}"></label>
-        <label>Notes<textarea name="notes">${esc(student.notes || "")}</textarea></label>
-        <div class="form-actions"><button type="submit" class="btn btn-sm" data-save-button>Save</button>
-        <button type="button" class="btn btn-sm btn-secondary" data-action="cancel-form">Cancel</button></div></form>`;
-      bindFormEl(async (data) => {
-        const result = await adminFn("update-student", { id: student.id, name: data.name, dob: data.dob, notes: data.notes });
-        Object.assign(student, result.student || {});
-        notify("Student updated.");
+      openStudentEditForm(student, {
+        account,
+        pendingFamily,
+        onSaved: () => studentDetail(student),
       });
       return;
     }

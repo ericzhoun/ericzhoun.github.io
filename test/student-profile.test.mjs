@@ -40,10 +40,36 @@ test("student profile keeps an activity feed", async () => {
   assert.match(script, /Activity/);
 });
 
+test("student profile offers a full-profile editor covering every student and family field", async () => {
+  const script = await readAdmin();
+  // One shared editor for the roster row menu and the detail page.
+  assert.match(script, /function openStudentEditForm\(student, \{ account, pendingFamily, onSaved \}/);
+  assert.match(script, /openStudentEditForm\(student, \{ onSaved: \(\) => students\(\) \}\)/);
+  assert.match(script, /openStudentEditForm\(student, \{\s*account,\s*pendingFamily,/);
+  // Student-owned fields.
+  assert.match(script, /<label>Name<input name="name" required/);
+  assert.match(script, /<label>Date of birth<input name="dob" type="date" required/);
+  assert.match(script, /<label>Notes<textarea name="notes">/);
+  // Family contact fields (parent profile / pending family record).
+  assert.match(script, /<label>Parent name<input name="parent_name"/);
+  assert.match(script, /<label>Phone<input name="student_phone"/);
+  assert.match(script, /<label>Emergency contact<input name="emergency_contact"/);
+  assert.match(script, /<label>Allergies<textarea name="allergies">/);
+  // Email is a fixed sign-in identity on accounts, editable for pending families.
+  assert.match(script, /<input name="email"[^>]* disabled/);
+  assert.match(script, /<label>Email<input name="email" type="email"/);
+  // Standalone students explain where contact details would come from.
+  assert.match(script, /Standalone student - no family record yet/);
+  // The save payload merges student and family fields in one call.
+  assert.match(script, /adminFn\("update-student", payload\)/);
+  // The roster loads pending families so their contact fields can prefill.
+  assert.match(script, /adminData\.read\("pending_parents", \{\}\)/);
+});
+
 test("student profile keeps the existing management actions", async () => {
   const script = await readAdmin();
   assert.match(script, /adminFn\("create-enrollment", \{/);
   assert.match(script, /adminFn\("set-credits", \{ enrollment_id/);
-  assert.match(script, /adminFn\("update-student", \{ id: student\.id/);
+  assert.match(script, /adminFn\("update-student", payload\)/);
   assert.match(script, /open-parent-account/);
 });
